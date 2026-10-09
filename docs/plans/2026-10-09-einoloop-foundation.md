@@ -54,4 +54,4 @@ Files: server/*、mem/*、a2ui/*、docs/acceptance/*。
 - [x] 接入嵌入页面、healthz/runtime、配置化监听，关闭无工具支持的文件上传。
 - [x] 保留 TurnLoop 取消与多轮，补上有限运行预算和确定终态。
 - [x] 全量 gofmt/vet/test/build（适合并发包补 race），真实模型技能查询、工程问答与工具 HTTP 验证。
-- [ ] 产出截图报告，独立启动18900，合回本地develop、清理任务worktree。无remote不虚构PR。
+- [x] 产出截图报告、独立启动18900并合回本地develop。无remote不虚构PR；任务worktree由最终收尾命令清理。
