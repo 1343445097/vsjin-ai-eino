@@ -1,0 +1,9 @@
+.git
+.worktrees
+.env
+.env.*
+data
+.runtime
+bin
+*.log
+docs/acceptance/**/assets

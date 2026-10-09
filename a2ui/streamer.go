@@ -25,8 +25,8 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/helpers"
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/msgops"
+	"github.com/vsjin/vsjin-ai/helpers"
+	"github.com/vsjin/vsjin-ai/msgops"
 )
 
 // RenderHistory writes the beginRendering + history surfaceUpdate messages to w
@@ -101,6 +101,7 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 	// consuming events so that intermediates are fully accumulated for
 	// session persistence.
 	writerBroken := false
+	var streamFailure error
 
 	for {
 		event, ok := events.Next()
@@ -170,7 +171,7 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 
 		if msgops.VariantIsToolResult(mo) {
 			content, toolCallID, toolName := msgops.DrainToolResult(mo)
-			log.Printf("[a2ui] tool result (%d chars): %.200s", len(content), content)
+			log.Printf("[a2ui] tool result (%d bytes)", len(content))
 			if !writerBroken {
 				_ = emitToolChip(w, surfaceID, rootChildren, msgIdx, "tool result", content)
 			}
@@ -212,6 +213,7 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 						break
 					}
 					log.Printf("[a2ui] stream recv error: %v", recvErr)
+					streamFailure = recvErr
 					break
 				}
 				chunks = append(chunks, chunk)
@@ -286,11 +288,13 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 
 			if !writerBroken {
 				for _, tc := range toolCalls {
-					log.Printf("[a2ui] tool call: %s args=%s", tc.Name, tc.Args)
+					log.Printf("[tool] call=%s", tc.Name)
 					_ = emitToolChip(w, surfaceID, rootChildren, msgIdx, "tool call", formatToolCall(tc))
 				}
 			}
-			if shellEmitted || accContent.Len() > 0 {
+			if len(toolCalls) > 0 {
+				lastContent.Reset()
+			} else if shellEmitted || accContent.Len() > 0 {
 				lastContent.Reset()
 				lastContent.WriteString(accContent.String())
 			}
@@ -312,7 +316,7 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 
 			if !writerBroken {
 				for _, tc := range toolCalls {
-					log.Printf("[a2ui] tool call: %s args=%s", tc.Name, tc.Args)
+					log.Printf("[tool] call=%s", tc.Name)
 					_ = emitToolChip(w, surfaceID, rootChildren, msgIdx, "tool call", formatToolCall(tc))
 				}
 				if content != "" {
@@ -322,7 +326,9 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 					}
 				}
 			}
-			if content != "" {
+			if len(toolCalls) > 0 {
+				lastContent.Reset()
+			} else if content != "" {
 				lastContent.Reset()
 				lastContent.WriteString(content)
 			}
@@ -339,6 +345,12 @@ func streamEvents[M adk.MessageType](w io.Writer, surfaceID string, rootChildren
 		}
 	}
 
+	if streamFailure != nil {
+		return lastContent.String(), intermediates, interruptID, streamFailure
+	}
+	if interruptID == "" && strings.TrimSpace(lastContent.String()) == "" {
+		return "", intermediates, "", errors.New("模型未生成最终回复，请重试")
+	}
 	return lastContent.String(), intermediates, interruptID, nil
 }
 

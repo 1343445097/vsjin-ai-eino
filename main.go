@@ -1,141 +1,64 @@
-/*
- * Copyright 2026 CloudWeGo Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+// Copyright 2026 CloudWeGo Authors. Licensed under Apache-2.0; see LICENSE.
+// VSJin AI standalone lifecycle and configuration: Copyright 2026 VSJin.
 package main
 
 import (
 	"context"
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
+	"github.com/vsjin/vsjin-ai/internal/appconfig"
+	"github.com/vsjin/vsjin-ai/internal/checkpoint"
+	"github.com/vsjin/vsjin-ai/mem"
+	"github.com/vsjin/vsjin-ai/policy"
+	"github.com/vsjin/vsjin-ai/server"
+	"github.com/vsjin/vsjin-ai/skills"
 	"log"
 	"os"
-	"path/filepath"
-	"time"
-
-	clc "github.com/cloudwego/eino-ext/callbacks/cozeloop"
-	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/callbacks"
-	"github.com/cloudwego/eino/schema"
-	"github.com/coze-dev/cozeloop-go"
-
-	adkstore "github.com/cloudwego/eino-examples/adk/common/store"
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/mem"
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/msgops"
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/server"
 )
 
 func main() {
-	ctx := context.Background()
-
-	// setup cozeloop tracing (optional)
-	// COZELOOP_WORKSPACE_ID=your workspace id
-	// COZELOOP_API_TOKEN=your token
-	cozeloopApiToken := os.Getenv("COZELOOP_API_TOKEN")
-	cozeloopWorkspaceID := os.Getenv("COZELOOP_WORKSPACE_ID")
-	if cozeloopApiToken != "" && cozeloopWorkspaceID != "" {
-		client, err := cozeloop.NewClient(
-			cozeloop.WithAPIToken(cozeloopApiToken),
-			cozeloop.WithWorkspaceID(cozeloopWorkspaceID),
-		)
-		if err != nil {
-			log.Fatalf("cozeloop.NewClient failed: %v", err)
-		}
-		defer func() {
-			time.Sleep(5 * time.Second)
-			client.Close(ctx)
-		}()
-		callbacks.AppendGlobalHandlers(clc.NewLoopHandler(client))
+	cfg, err := appconfig.Load(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	switch msgops.KindFromEnv() {
-	case msgops.KindAgentic:
-		runTyped[*schema.AgenticMessage](ctx)
-	default:
-		runTyped[*schema.Message](ctx)
+	if cfg.MessageKind == "agentic" {
+		runTyped[*schema.AgenticMessage](cfg)
+	} else {
+		runTyped[*schema.Message](cfg)
 	}
 }
 
-func runTyped[M adk.MessageType](ctx context.Context) {
-	agent, err := buildAgentTyped[M](ctx)
+func runTyped[M adk.MessageType](cfg appconfig.Config) {
+	ctx := context.Background()
+	root := cfg.SkillsDir
+	if root == "" {
+		dir, cleanup, err := policy.Materialize()
+		if err != nil {
+			log.Fatal("内置技能不可用")
+		}
+		defer cleanup()
+		root = dir
+	}
+	catalog, err := skills.Load(root, cfg.SkillGroups)
 	if err != nil {
-		log.Fatalf("failed to build agent: %v", err)
+		log.Fatalf("技能目录加载失败: %v", err)
 	}
-
-	checkpointStore := adkstore.NewInMemoryStore()
-
-	sessionDir := msgops.DefaultSessionDir(msgops.KindOf[M]())
-	log.Printf("message kind: %s", msgops.KindOf[M]())
-	log.Printf("session dir: %s", sessionDir)
-
-	workspaceDir := os.Getenv("WORKSPACE_DIR")
-	if workspaceDir == "" {
-		workspaceDir = "./data/workspace"
-	}
-
-	store, err := mem.NewStore[M](sessionDir)
-	if err != nil {
-		log.Fatalf("failed to create session store: %v", err)
-	}
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	projectRoot := os.Getenv("PROJECT_ROOT")
-	if projectRoot == "" {
-		// Default: the directory from which the binary is run.
-		// Override with PROJECT_ROOT=/path/to/repo to give the agent full codebase access.
-		if cwd, err := os.Getwd(); err == nil {
-			projectRoot = cwd
+	var agent adk.TypedResumableAgent[M]
+	if !cfg.RuntimeOnly {
+		agent, err = buildAgentTyped[M](ctx, cfg, catalog)
+		if err != nil {
+			log.Fatalf("模型配置不可用: %v", err)
 		}
 	}
-	if abs, err := filepath.Abs(projectRoot); err == nil {
-		projectRoot = abs
+	store, err := mem.NewStore[M](cfg.SessionDir())
+	if err != nil {
+		log.Fatal("会话存储不可用")
 	}
-	log.Printf("project root: %s", projectRoot)
-
-	// EXAMPLES_DIR points to the root of the eino-examples repository.
-	// Defaults to PROJECT_ROOT/examples if that directory exists, otherwise PROJECT_ROOT.
-	examplesDir := os.Getenv("EXAMPLES_DIR")
-	if examplesDir == "" {
-		candidate := filepath.Join(projectRoot, "examples")
-		if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
-			examplesDir = candidate
-		} else {
-			examplesDir = projectRoot
-		}
+	summaries := make([]server.SkillSummary, 0, len(catalog.Skills))
+	for _, s := range catalog.Skills {
+		summaries = append(summaries, server.SkillSummary{Name: s.Name, Description: s.Description})
 	}
-	if abs, err := filepath.Abs(examplesDir); err == nil {
-		examplesDir = abs
-	}
-	log.Printf("examples dir: %s", examplesDir)
-
-	srv := server.New[M](server.Config[M]{
-		Agent:           agent,
-		CheckPointStore: checkpointStore,
-		Store:           store,
-		WorkspaceDir:    workspaceDir,
-		ProjectRoot:     projectRoot,
-		ExamplesDir:     examplesDir,
-		Port:            port,
-	})
-
-	host := os.Getenv("HOST")
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	log.Printf("starting server on http://%s:%s", host, port)
+	srv := server.New(server.Config[M]{Agent: agent, CheckPointStore: checkpoint.NewInMemoryStore(), Store: store, Host: cfg.Host, Port: cfg.Port, APIToken: cfg.APIToken, TurnTimeout: cfg.TurnTimeout, Skills: summaries, Configured: !cfg.RuntimeOnly})
+	log.Printf("VSJin AI · EinoLoop listening at http://%s:%s (%d authorized skills)", cfg.Host, cfg.Port, len(summaries))
 	srv.Spin()
 }

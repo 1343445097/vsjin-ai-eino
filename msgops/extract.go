@@ -191,7 +191,7 @@ func ToolResults[M adk.MessageType](msg M) []ToolResult {
 	}
 }
 
-// RoleLabel returns the human label used by chatwitheino UIs.
+// RoleLabel returns the human label used by VSJin AI UIs.
 func RoleLabel[M adk.MessageType](msg M) string {
 	switch m := any(msg).(type) {
 	case *schema.Message:

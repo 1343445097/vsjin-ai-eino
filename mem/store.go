@@ -22,14 +22,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
 
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/msgops"
+	"github.com/vsjin/vsjin-ai/msgops"
 )
+
+var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // SessionMeta provides summary info for the session list.
 type SessionMeta struct {
@@ -84,20 +88,22 @@ func (s *Session[M]) Append(msg M) error {
 	defer s.mu.Unlock()
 
 	msg = msgops.NormalizeForSession(msg)
-	s.messages = append(s.messages, msg)
 
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(s.filePath, os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.filePath, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
 	_, err = fmt.Fprintf(f, "%s\n", data)
+	if err == nil {
+		s.messages = append(s.messages, msg)
+	}
 	return err
 }
 
@@ -125,7 +131,7 @@ func (s *Session[M]) Title() string {
 			return title
 		}
 	}
-	return "New Session"
+	return "新对话"
 }
 
 // Store manages persisted sessions backed by JSONL files.
@@ -143,7 +149,7 @@ type Store[M adk.MessageType] struct {
 
 // NewStore creates a new Store backed by the given directory (created if absent).
 func NewStore[M adk.MessageType](dir string) (*Store[M], error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create session dir: %w", err)
 	}
 	return &Store[M]{
@@ -155,6 +161,9 @@ func NewStore[M adk.MessageType](dir string) (*Store[M], error) {
 
 // GetOrCreate returns the session for id, creating it if it does not exist.
 func (s *Store[M]) GetOrCreate(id string) (*Session[M], error) {
+	if !validSessionID.MatchString(id) {
+		return nil, fmt.Errorf("invalid session ID")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -209,11 +218,15 @@ func (s *Store[M]) List() ([]SessionMeta, error) {
 		}
 		metas = append(metas, SessionMeta{ID: id, Title: sess.Title(), CreatedAt: sess.CreatedAt})
 	}
+	sort.Slice(metas, func(i, j int) bool { return metas[i].CreatedAt.After(metas[j].CreatedAt) })
 	return metas, nil
 }
 
 // Delete removes the session file and evicts it from the cache.
 func (s *Store[M]) Delete(id string) error {
+	if !validSessionID.MatchString(id) {
+		return fmt.Errorf("invalid session ID")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -244,7 +257,7 @@ func createSession[M adk.MessageType](id, filePath string) (*Session[M], error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filePath, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filePath, append(data, '\n'), 0o600); err != nil {
 		return nil, err
 	}
 	return &Session[M]{
@@ -263,6 +276,7 @@ func loadSession[M adk.MessageType](filePath string) (*Session[M], error) {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 
 	// First line: header
 	if !scanner.Scan() {

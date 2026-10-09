@@ -1,0 +1,24 @@
+# VSJin EinoLoop Wire v1 (implementation contract)
+
+One trusted backend connection; no business/model credentials in model prompts or the independent engine. HRSS remains owner of identity, model invocation, tool authorization, chat history and audit. Fast path unchanged. CLI retained.
+
+Configuration: HRSS `HRSS_EINO_LOOP_BASE_URL` and `HRSS_EINO_LOOP_API_TOKEN`; VSJin `VSJIN_AI_API_TOKEN` must match. Explicit Eino expert binding must fail clearly if not configured; do not silently change engine.
+
+POST `/v1/runs`, Authorization Bearer service token, Content-Type application/json. Body:
+```
+{"version":"1","runId":"uuid","runToken":"random-secret-per-run","messages":[{"role":"system","content":"authorized system and skill catalog"},{"role":"user","content":"..."}],"tools":[{"type":"function","function":{"name":"skills_read","description":"...","parameters":{"type":"object",...}}}],"maxIterations":12,"timeoutSeconds":180,"temperature":0.2}
+```
+`messages` is standard LLM message JSON (role/content/name/tool_calls/tool_call_id; tool_calls OpenAI-style id/type/function{name,arguments}). First version text only; reject unsupported multimodal rather than silently drop images.
+
+Response SSE each `data: <json>`. Every event has `version:"1",type,runId,sequence`.
+- `run.started`
+- `model.request`: requestId plus `messages` and `tools` arrays. HRSS calls existing authorized LLMClient, audits input/output and posts response below. No API key/address in event.
+- `tool.request`: requestId plus `call:{id,type:"function",function:{name,arguments}}`. HRSS invokes EXISTING per-run tool invoker; runtime must only accept declared tools. Tool may be skills_read or skill_http_request; schema and tool scope remain HRSS-owned.
+- `message.delta`: `delta` string (can be one final chunk in v1).
+- `run.completed`: `final` string, MUST nonempty final assistant after all tools.
+- `run.failed`: `error` sanitized string.
+- `run.cancelled`.
+
+POST `/v1/runs/:runId/responses` Authorization service token AND `X-VSJin-Run-Token: runToken`. Body `{"requestId":"...","message":<standard assistant message>}` for model or `{"requestId":"...","result":"tool result"}` for tool or `{"requestId":"...","error":"sanitized failure"}`. Exactly one pending request, matching id; repeat/unknown replies rejected 409. 204 success. HRSS processes callbacks sequentially, preserving model/tools and final reply. POST cancel `/v1/runs/:runId/cancel`, same two tokens; HTTP context cancellation also cancels the run. No arbitrary callback URL/SSRF. Ended run discarded, duplicate active runId returns409. Request<=4MiB, response<=4MiB, whole run bounded.
+
+Runtime interface on HRSS side can match existing Run(ctx, []*schema.Message, emit AgentEvent)(*LLMResponse,error), SetAuditRecorder, SetForceFirstTool, SetReturnDirectlyTools if needed. External engine remains stateless; same authorized tools/history supplied each run. Service-token binding required even on localhost for `/v1/runs*`.

@@ -1,0 +1,153 @@
+{
+  "groupKeys": ["knowledge.base", "knowledge.cad"],
+  "operations": [
+    {
+      "id": "knowledge.search",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.search",
+      "groupKey": "knowledge.base",
+      "description": "检索当前用户可见的企业已发布知识并返回命中证据",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"},
+          "mode": {"type": "string"},
+          "topK": {"type": "integer"},
+          "limit": {"type": "integer"},
+          "scoreThreshold": {"type": "number"},
+          "matchFields": {"type": "array", "items": {"type": "string"}},
+          "fileVersionIds": {"type": "array", "items": {"type": "integer"}},
+          "directoryRef": {"type": "string"},
+          "filters": {
+            "type": "object",
+            "properties": {
+              "createdFrom": {"type": "string", "format": "date-time"},
+              "createdTo": {"type": "string", "format": "date-time"},
+              "fileTypes": {"type": "array", "items": {"type": "string"}},
+              "page": {"type": "integer"},
+              "relativePathPrefix": {"type": "string"},
+              "sectionPath": {"type": "string"},
+              "sheet": {"type": "string"},
+              "slide": {"type": "integer"},
+              "sourceTypes": {"type": "array", "items": {"type": "string"}},
+              "tags": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "includeParent": {"type": "boolean"},
+              "includeScoreDetails": {"type": "boolean"},
+              "matchFields": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "knowledge.get_source",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.get_source",
+      "groupKey": "knowledge.base",
+      "description": "读取授权来源及发布状态",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sourceId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cad.find_views",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/cad.find_views",
+      "groupKey": "knowledge.cad",
+      "description": "在授权图纸文件中查找视图",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"},
+          "sourceId": {"type": "string"},
+          "viewId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId", "query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cad.search_text",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/cad.search_text",
+      "groupKey": "knowledge.cad",
+      "description": "在授权图纸文件中搜索原文",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"},
+          "sourceId": {"type": "string"},
+          "viewId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId", "query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cad.list_sheets",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/cad.list_sheets",
+      "groupKey": "knowledge.cad",
+      "description": "列出授权企业图纸单页及版本标识",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chunkSetId": {"type": "integer", "minimum": 1},
+          "fileVersionId": {"type": "integer", "minimum": 1},
+          "publicationId": {"type": "integer", "minimum": 1},
+          "query": {"type": "string"},
+          "sourceId": {"type": "string"},
+          "viewId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cad.get_sheet",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/cad.get_sheet",
+      "groupKey": "knowledge.cad",
+      "description": "按精确版本标识读取选中图纸页",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chunkSetId": {"type": "integer", "minimum": 1},
+          "fileVersionId": {"type": "integer", "minimum": 1},
+          "publicationId": {"type": "integer", "minimum": 1},
+          "query": {"type": "string"},
+          "sourceId": {"type": "string"},
+          "viewId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId", "viewId", "fileVersionId", "publicationId", "chunkSetId"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

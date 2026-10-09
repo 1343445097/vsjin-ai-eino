@@ -1,204 +1,397 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="zh-CN">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Chat With Eino</title>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f6f8fb">
+<title>VSJin AI · 智能工作台</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; background: #f5f5f5; }
-
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 20px; background: #fff; border-bottom: 1px solid #e0e0e0;
-  }
-  header h1 { font-size: 1.1rem; font-weight: 600; }
-  header button { padding: 6px 14px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
-  header button:hover { background: #1d4ed8; }
-
-  .main { display: flex; flex: 1; overflow: hidden; }
-
-  /* Sidebar */
-  .sidebar {
-    width: 220px; background: #fff; border-right: 1px solid #e0e0e0;
-    display: flex; flex-direction: column; overflow: hidden;
-  }
-  .sidebar-title { padding: 10px 14px; font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: .05em; }
-  .session-list { flex: 1; overflow-y: auto; }
-  .session-item {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 9px 14px; cursor: pointer; font-size: 0.85rem; color: #333;
-    border-left: 3px solid transparent; transition: background .1s;
-  }
-  .session-item:hover { background: #f0f4ff; }
-  .session-item.active { background: #eff6ff; border-left-color: #2563eb; font-weight: 500; color: #1d40af; }
-  .session-item .del-btn { opacity: 0; font-size: 0.7rem; color: #999; background: none; border: none; cursor: pointer; padding: 2px 4px; }
-  .session-item:hover .del-btn { opacity: 1; }
-  .session-item .del-btn:hover { color: #dc2626; }
-
-  /* Chat area */
-  .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-  #chat-container {
-    flex: 1; overflow-y: auto; padding: 20px;
-  }
-  #chat-container .column { display: flex; flex-direction: column; gap: 14px; }
-  #chat-container .card {
-    background: #fff; border-radius: 10px; padding: 14px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08); max-width: 820px;
-  }
-  #chat-container .card .column { gap: 6px; }
-  #chat-container .caption {
-    font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .06em; color: #6b7280;
-  }
-  #chat-container .body { font-size: 0.9rem; line-height: 1.65; color: #1f2937; }
-  #chat-container .body p { margin-bottom: 0.5em; }
-  #chat-container .body pre { background: #f3f4f6; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 0.82rem; margin: 8px 0; }
-  #chat-container .body code { background: #f3f4f6; border-radius: 3px; padding: 1px 4px; font-size: 0.82rem; }
-  #chat-container .body pre code { background: none; padding: 0; }
-
-  /* Align user cards to the right */
-  #chat-container .card[data-role="You"] { margin-left: auto; background: #eff6ff; }
-  #chat-container .card[data-role="You"] .caption { color: #2563eb; }
-
-  /* Tool call / tool result chips — compact, muted appearance */
-  #chat-container .card[data-role="tool call"],
-  #chat-container .card[data-role="tool result"] {
-    background: #f9fafb; border: 1px solid #e5e7eb;
-    padding: 8px 12px; box-shadow: none; max-width: 640px;
-  }
-  #chat-container .card[data-role="tool call"] .caption { color: #7c3aed; }
-  #chat-container .card[data-role="tool result"] .caption { color: #065f46; }
-  #chat-container .card[data-role="tool call"] .body,
-  #chat-container .card[data-role="tool result"] .body {
-    font-size: 0.8rem; color: #374151; font-family: monospace; line-height: 1.4;
-    white-space: pre-wrap; word-break: break-all;
-  }
-  #chat-container .card[data-role="error"] {
-    background: #fef2f2; border: 1px solid #fca5a5; padding: 8px 12px; box-shadow: none;
-  }
-  #chat-container .card[data-role="error"] .caption { color: #dc2626; }
-
-  /* Approval needed card */
-  #chat-container .card[data-role="approval needed"] {
-    background: #fffbeb; border: 1px solid #fcd34d; padding: 12px 16px; box-shadow: none; max-width: 820px;
-  }
-  #chat-container .card[data-role="approval needed"] .caption { color: #d97706; }
-  #chat-container .card[data-role="approval needed"] .body {
-    font-size: 0.82rem; color: #374151; font-family: monospace; line-height: 1.55;
-    white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
-    max-height: 320px; overflow-y: auto; margin-top: 4px;
-  }
-
-  /* Approval button row */
-  .approval-buttons { display: flex; gap: 8px; margin-top: 8px; }
-  .approval-btn-approve {
-    padding: 6px 14px; background: #059669; color: #fff; border: none;
-    border-radius: 6px; cursor: pointer; font-size: 0.8rem;
-  }
-  .approval-btn-approve:hover { background: #047857; }
-  .approval-btn-reject {
-    padding: 6px 14px; background: #dc2626; color: #fff; border: none;
-    border-radius: 6px; cursor: pointer; font-size: 0.8rem;
-  }
-  .approval-btn-reject:hover { background: #b91c1c; }
-  .approval-btn-approve:disabled, .approval-btn-reject:disabled {
-    opacity: 0.5; cursor: not-allowed;
-  }
-
-  /* Bottom bar */
-  .bottom-bar {
-    padding: 14px 20px; background: #fff; border-top: 1px solid #e0e0e0;
-    display: flex; flex-direction: column; gap: 10px;
-  }
-  .upload-row { display: flex; align-items: center; gap: 10px; font-size: 0.82rem; color: #555; }
-  .upload-row label { cursor: pointer; color: #2563eb; text-decoration: underline; }
-  #upload-info { color: #059669; font-size: 0.8rem; }
-  .input-row { display: flex; gap: 10px; }
-  #msg-input {
-    flex: 1; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-    font-size: 0.9rem; resize: none; height: 42px; font-family: inherit;
-  }
-  #msg-input:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
-  #send-btn {
-    padding: 9px 18px; background: #2563eb; color: #fff; border: none;
-    border-radius: 8px; cursor: pointer; font-size: 0.9rem; white-space: nowrap;
-  }
-  #send-btn:hover { background: #1d4ed8; }
-  #send-btn:disabled { background: #93c5fd; cursor: not-allowed; }
-  #abort-btn {
-    display: none; padding: 9px 14px; background: #dc2626; color: #fff; border: none;
-    border-radius: 8px; cursor: pointer; font-size: 0.9rem; white-space: nowrap;
-  }
-  #abort-btn:hover { background: #b91c1c; }
-
-  /* Queued preempt indicator */
-  .preempt-chip {
-    font-size: 0.75rem; color: #d97706; padding: 4px 10px; margin-top: 4px;
-    background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px;
-    display: inline-block; animation: pulse 1.2s ease-in-out infinite;
-  }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-
-  .empty-state { text-align: center; color: #9ca3af; margin-top: 80px; font-size: 0.9rem; }
+:root {
+  color-scheme: light;
+  --ink: #182638;
+  --muted: #65758a;
+  --faint: #8b98a8;
+  --line: #e3e9f0;
+  --canvas: #f6f8fb;
+  --paper: #fff;
+  --blue: #2866b1;
+  --blue-dark: #1e528f;
+  --blue-pale: #edf4fc;
+  --danger: #ad3939;
+  font-family: Inter, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; }
+body { color: var(--ink); background: var(--canvas); font-size: 15px; }
+button, input, textarea { font: inherit; }
+button { color: inherit; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 3px solid #76a9e7; outline-offset: 2px;
+}
+.app { display: flex; width: 100%; height: 100%; min-height: 0; }
+.sidebar {
+  display: flex; flex: 0 0 252px; flex-direction: column; min-width: 0; min-height: 0;
+  border-right: 1px solid var(--line); background: #fbfcfe;
+}
+.brand { display: flex; min-height: 76px; align-items: center; gap: 11px; padding: 0 20px; border-bottom: 1px solid var(--line); }
+.brand-mark { width: 34px; height: 34px; flex: none; }
+.brand-copy { min-width: 0; }
+.brand-name { color: #172b43; font-size: 16px; font-weight: 700; line-height: 1.25; }
+.brand-subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.side-actions { padding: 16px 13px 10px; }
+.button {
+  display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--paper); cursor: pointer;
+  padding: 0 12px; transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+.button:hover { border-color: #bdcbd9; background: #f8fafc; }
+.button:disabled { cursor: not-allowed; opacity: .58; }
+.button-primary { border-color: var(--blue); background: var(--blue); color: white; }
+.button-primary:hover { border-color: var(--blue-dark); background: var(--blue-dark); }
+.button-quiet { border-color: transparent; background: transparent; color: var(--muted); }
+.button-quiet:hover { color: var(--ink); }
+.new-session { width: 100%; justify-content: flex-start; }
+.icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.list-heading { display: flex; align-items: center; justify-content: space-between; padding: 17px 18px 9px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.session-list { flex: 1; min-height: 0; overflow: auto; padding: 0 9px 14px; }
+.session-empty { padding: 10px; color: var(--faint); font-size: 13px; line-height: 1.5; }
+.session-item { display: flex; min-height: 42px; align-items: center; gap: 6px; margin: 2px 0; padding: 3px 4px 3px 10px; border-radius: 5px; }
+.session-item:hover { background: #f0f4f8; }
+.session-item.active { background: #eaf1f9; color: #1e4f83; }
+.session-select { overflow: hidden; flex: 1; min-width: 0; border: 0; background: transparent; padding: 7px 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; font-size: 13px; }
+.delete-session { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #7a8796; cursor: pointer; opacity: 0; }
+.session-item:hover .delete-session, .delete-session:focus-visible { opacity: 1; }
+.delete-session:hover { background: #fff; color: var(--danger); }
+.sidebar-footer { padding: 11px 13px; border-top: 1px solid var(--line); }
+.connection-button { width: 100%; justify-content: flex-start; color: var(--muted); font-size: 13px; }
+.main { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.topbar { display: flex; height: 62px; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 0 26px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.88); }
+.topbar-title { min-width: 0; overflow: hidden; color: #293a4f; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.runtime-state { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.state-dot { width: 7px; height: 7px; border-radius: 50%; background: #4d9a72; }
+.state-dot.offline { background: #bd7e36; }
+.content { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+#chat-container { flex: 1; min-height: 0; overflow: auto; padding: 30px 24px 22px; scroll-behavior: smooth; }
+#chat-container > .column { width: min(100%, 820px); margin: 0 auto; gap: 18px; }
+.welcome { width: min(100%, 780px); margin: clamp(20px, 8vh, 86px) auto 36px; }
+.welcome-mark { display: grid; width: 46px; height: 46px; place-items: center; border: 1px solid #d7e4f1; border-radius: 10px; background: #fff; color: var(--blue); }
+.welcome-mark svg { width: 26px; height: 26px; }
+.welcome h1 { margin: 21px 0 8px; color: #1a2c42; font-size: 29px; font-weight: 650; line-height: 1.25; }
+.welcome-lead { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.skills { display: flex; flex-wrap: wrap; gap: 8px; margin: 23px 0 29px; }
+.skill-chip { display: inline-flex; min-height: 29px; align-items: center; gap: 7px; border: 1px solid #dce5ee; border-radius: 4px; background: #fff; padding: 4px 9px; color: #475d74; font-size: 12px; }
+.skill-chip::before { width: 6px; height: 6px; border-radius: 50%; background: #6c93bd; content: ""; }
+.section-label { margin-bottom: 11px; color: #64758a; font-size: 12px; font-weight: 600; }
+.suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.suggestion {
+  min-height: 96px; border: 1px solid var(--line); border-radius: 6px; background: white;
+  padding: 13px 14px; text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease;
+}
+.suggestion:hover { border-color: #b9cde1; background: #fbfdff; }
+.suggestion-title { display: block; margin-bottom: 6px; color: #2e435b; font-size: 13px; font-weight: 600; }
+.suggestion-copy { display: block; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.empty-state { width: min(100%, 780px); margin: 68px auto; color: var(--muted); text-align: center; line-height: 1.7; }
+.empty-state strong { display: block; margin-bottom: 5px; color: #36495e; font-weight: 600; }
+.card { max-width: 820px; border-radius: 5px; padding: 0; overflow-wrap: anywhere; }
+.card .column { display: flex; flex-direction: column; gap: 7px; }
+.card[data-role="You"] { margin-left: auto; max-width: min(82%, 690px); border: 1px solid #d6e5f5; background: #eff5fb; padding: 12px 15px; }
+.card[data-role="assistant"], .card[data-role="Assistant"] { padding: 4px 0; }
+.caption { color: #64758a; font-size: 11px; font-weight: 650; }
+.card[data-role="You"] .caption { color: #356998; }
+.body { color: #27374a; font-size: 15px; line-height: 1.78; }
+.body p { margin: 0 0 .75em; }
+.body p:last-child { margin-bottom: 0; }
+.body h1, .body h2, .body h3, .body h4 { margin: 1.2em 0 .5em; color: #20344b; line-height: 1.4; }
+.body h1 { font-size: 22px; }
+.body h2 { font-size: 19px; }
+.body h3, .body h4 { font-size: 16px; }
+.body ul, .body ol { margin: .45em 0 .85em; padding-left: 1.55em; }
+.body li { margin: .25em 0; }
+.body blockquote { margin: .8em 0; border-left: 3px solid #c9d9e9; padding: 2px 0 2px 13px; color: #53657a; }
+.body pre { overflow: auto; margin: .8em 0; border: 1px solid #e3e9f0; border-radius: 5px; background: #f5f7fa; padding: 12px 14px; color: #233449; font-size: 13px; line-height: 1.6; }
+.body code { border-radius: 3px; background: #eef2f6; padding: 1px 4px; color: #315276; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
+.body pre code { background: transparent; padding: 0; color: inherit; }
+.body a { color: #245f9c; text-decoration: underline; text-underline-offset: 2px; }
+.body table { width: 100%; border-collapse: collapse; margin: .8em 0; font-size: 13px; }
+.body th, .body td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; }
+.body th { background: #f3f6f9; }
+.card[data-role="tool call"], .card[data-role="tool result"] { max-width: 700px; border: 1px solid #e6ebf0; background: #fafbfd; padding: 9px 12px; }
+.card[data-role="tool call"] .body, .card[data-role="tool result"] .body, .card[data-role="approval needed"] .body { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; }
+.card[data-role="tool call"] .caption { color: #687b92; }
+.card[data-role="tool result"] .caption { color: #47785d; }
+.card[data-role="error"] { border: 1px solid #edcaca; background: #fff8f7; padding: 10px 13px; }
+.card[data-role="error"] .caption { color: var(--danger); }
+.card[data-role="approval needed"] { max-width: 780px; border: 1px solid #e8d6ad; background: #fffcf5; padding: 12px 14px; }
+.approval-buttons { display: flex; gap: 8px; margin-top: 10px; }
+.preempt-chip { display: inline-flex; margin: 8px 0 0; border: 1px solid #e8d6ad; border-radius: 4px; background: #fffcf5; padding: 5px 9px; color: #795f31; font-size: 12px; }
+.composer-wrap { flex: none; padding: 12px 24px 18px; background: linear-gradient(180deg, rgba(246,248,251,0), var(--canvas) 16px); }
+.composer { width: min(100%, 820px); margin: 0 auto; border: 1px solid #cfd9e4; border-radius: 7px; background: #fff; transition: border-color .15s ease; }
+.composer:focus-within { border-color: #82a9d2; }
+#msg-input { display: block; width: 100%; min-height: 56px; max-height: 180px; resize: vertical; border: 0; border-radius: 7px 7px 0 0; background: transparent; padding: 14px 15px 7px; color: var(--ink); line-height: 1.55; }
+#msg-input:focus { outline: 0; }
+#msg-input::placeholder { color: #8491a0; }
+.composer-actions { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 8px 8px 13px; }
+.composer-hint { color: #8592a0; font-size: 11px; }
+.composer-buttons { display: flex; gap: 7px; }
+.send-button { min-height: 36px; padding: 0 13px; font-size: 13px; }
+#abort-btn { display: none; min-height: 36px; color: var(--danger); font-size: 13px; }
+.notice { width: min(100%, 820px); margin: 0 auto 10px; border: 1px solid #edcaca; border-radius: 5px; background: #fff8f7; padding: 9px 12px; color: #8e3030; font-size: 13px; line-height: 1.5; }
+.dialog { width: min(440px, calc(100% - 30px)); border: 1px solid #d9e1e9; border-radius: 8px; padding: 0; color: var(--ink); box-shadow: 0 16px 50px rgba(18,38,60,.2); }
+.dialog::backdrop { background: rgba(18,32,48,.38); }
+.dialog-form { padding: 22px; }
+.dialog h2 { margin: 0 0 8px; font-size: 18px; }
+.dialog-copy { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.field-label { display: block; margin-bottom: 7px; color: #3d5065; font-size: 13px; font-weight: 600; }
+.token-input { width: 100%; min-height: 42px; border: 1px solid #cad5e0; border-radius: 5px; padding: 8px 10px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 19px; }
+.mobile-new, .mobile-sessions { display: none; }
+@media (max-width: 767px) {
+  .app { position: relative; }
+  .sidebar { flex-basis: 60px; align-items: center; }
+  .brand { width: 100%; min-height: 60px; justify-content: center; padding: 0; }
+  .brand-mark { width: 31px; height: 31px; }
+  .brand-copy, .side-actions, .list-heading, .session-list, .sidebar-footer { display: none; }
+  .mobile-new { display: grid; width: 42px; height: 42px; margin-top: 10px; place-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--blue); cursor: pointer; }
+  .mobile-sessions { display: grid; width: 42px; height: 42px; margin-top: 3px; place-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #526a83; cursor: pointer; }
+  .sidebar.mobile-open { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: min(300px, calc(100vw - 60px)); align-items: stretch; background: #fbfcfe; box-shadow: 8px 0 24px rgba(20,39,58,.14); }
+  .sidebar.mobile-open .brand { justify-content: flex-start; padding: 0 17px; }
+  .sidebar.mobile-open .brand-copy, .sidebar.mobile-open .side-actions, .sidebar.mobile-open .list-heading, .sidebar.mobile-open .session-list, .sidebar.mobile-open .sidebar-footer { display: flex; }
+  .sidebar.mobile-open .side-actions { display: block; }
+  .sidebar.mobile-open .list-heading { display: flex; }
+  .sidebar.mobile-open .session-list { display: block; }
+  .sidebar.mobile-open .sidebar-footer { display: block; }
+  .sidebar.mobile-open .mobile-new { display: none; }
+  .sidebar.mobile-open .mobile-sessions { width: auto; height: 40px; justify-content: start; margin: 5px 13px 3px; padding-left: 9px; }
+  .main { min-width: 0; }
+  .topbar { height: 54px; gap: 8px; padding: 0 13px; }
+  .topbar-title { font-size: 13px; }
+  .runtime-state { font-size: 0; }
+  .runtime-state .state-dot { width: 9px; height: 9px; }
+  .topbar .button { min-height: 36px; padding: 0 8px; font-size: 12px; }
+  #chat-container { padding: 20px 15px 15px; }
+  .welcome { margin: 8vh auto 25px; }
+  .welcome h1 { font-size: 25px; }
+  .suggestions { grid-template-columns: 1fr; gap: 8px; }
+  .suggestion { min-height: 76px; padding: 11px 12px; }
+  .card[data-role="You"] { max-width: 92%; }
+  .composer-wrap { padding: 8px 10px max(10px, env(safe-area-inset-bottom)); }
+  #msg-input { min-height: 52px; }
+  .composer-hint { display: none; }
+  .delete-session { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
 </style>
 </head>
 <body>
-
-<header>
-  <h1>Chat With Eino</h1>
-  <button id="new-session-btn">+ New Session</button>
-</header>
-
-<div class="main">
-  <aside class="sidebar">
-    <div class="sidebar-title">Sessions</div>
-    <div class="session-list" id="session-list"></div>
+<div class="app">
+  <aside class="sidebar" aria-label="会话导航">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 40 40" role="img" aria-label="VSJin AI 标志">
+        <rect x="1" y="1" width="38" height="38" rx="9" fill="#eaf2fb" stroke="#d5e3f2"/>
+        <path d="M10 12.5h5.2l4.8 15 4.8-15H30L22 33h-4L10 12.5Z" fill="#2866b1"/>
+        <path d="M27.5 10.5h5v5h-5z" fill="#6d9bcc"/>
+      </svg>
+      <div class="brand-copy"><div class="brand-name">VSJin AI</div><div class="brand-subtitle">智能工作台</div></div>
+    </div>
+    <button class="mobile-new" id="mobile-new-session" type="button" aria-label="新建会话" title="新建会话">
+      <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="mobile-sessions" id="mobile-sessions-toggle" type="button" aria-label="展开会话列表" aria-expanded="false" title="会话列表">
+      <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>
+    </button>
+    <div class="side-actions">
+      <button class="button new-session" id="new-session-btn" type="button">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建会话
+      </button>
+    </div>
+    <div class="list-heading"><span>最近会话</span></div>
+    <nav class="session-list" id="session-list" aria-label="最近会话"></nav>
+    <div class="sidebar-footer">
+      <button class="button button-quiet connection-button" id="connection-btn" type="button">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="m19.4 15 .1.1a1.8 1.8 0 1 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3 .9v.2a1.8 1.8 0 1 1-3.6 0v-.2a1.8 1.8 0 0 0-3-.9l-.1.1a1.8 1.8 0 1 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-.9-3h-.2a1.8 1.8 0 1 1 0-3.6h.2a1.8 1.8 0 0 0 .9-3l-.1-.1a1.8 1.8 0 1 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3-.9v-.2a1.8 1.8 0 1 1 3.6 0v.2a1.8 1.8 0 0 0 3 .9l.1-.1a1.8 1.8 0 1 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 .9 3h.2a1.8 1.8 0 1 1 0 3.6h-.2a1.8 1.8 0 0 0-.9 3Z"/></svg>
+        连接设置
+      </button>
+    </div>
   </aside>
-
-  <div class="chat-area">
-    <div id="chat-container">
-      <div class="empty-state">Select or create a session to start chatting.</div>
-    </div>
-
-    <div class="bottom-bar">
-      <div class="upload-row">
-        <span>📎</span>
-        <label for="file-input">Upload document</label>
-        <input type="file" id="file-input" style="display:none"/>
-        <span id="upload-info"></span>
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title" id="page-title">智能工作台</div>
+      <div class="topbar-right">
+        <div class="runtime-state" id="runtime-state" role="status" aria-live="polite"><span class="state-dot offline"></span><span>正在连接</span></div>
+        <button class="button button-quiet" id="mobile-connection-btn" type="button" aria-label="连接设置" title="连接设置">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.6a5 5 0 0 0-.6-1.3l1-1.8-2.1-2.1-1.8 1a5 5 0 0 0-1.5-.6l-.6-2h-3l-.6 2a5 5 0 0 0-1.3.6l-1.8-1L2.6 6.8l1 1.8a5 5 0 0 0-.6 1.5l-2 .6v3l2 .6a5 5 0 0 0 .6 1.3l-1 1.8 2.1 2.1 1.8-1a5 5 0 0 0 1.5.6l.6 2h3l.6-2a5 5 0 0 0 1.3-.6l1.8 1 2.1-2.1-1-1.8a5 5 0 0 0 .6-1.5l2-.6Z" transform="translate(1 0) scale(.92)"/></svg>
+        </button>
       </div>
-      <div class="input-row">
-        <textarea id="msg-input" placeholder="Ask about your document…" rows="1"></textarea>
-        <button id="send-btn">Send</button>
-        <button id="abort-btn">Abort</button>
+    </header>
+    <section class="content" aria-label="对话">
+      <div id="chat-container" aria-live="polite" aria-relevant="additions text">
+        <section class="welcome" id="welcome" aria-labelledby="welcome-title">
+          <div class="welcome-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 7h5l6 18 6-18h5l-8 22h-6L5 7Z" fill="currentColor"/></svg></div>
+          <h1 id="welcome-title">你好，我是 VSJin AI</h1>
+          <p class="welcome-lead">面向专业工作的智能助手。你可以从资料整理、图纸分析或现场问题开始。</p>
+          <div class="skills" id="skills-list" aria-label="可用能力"><span class="skill-chip">正在读取可用能力</span></div>
+          <div class="section-label">你可以这样开始</div>
+          <div class="suggestions">
+            <button class="suggestion" type="button" data-prompt="请帮我梳理这份资料的核心内容、关键结论和需要跟进的事项。">
+              <span class="suggestion-title">整理专业资料</span><span class="suggestion-copy">提炼重点、结论与后续事项</span>
+            </button>
+            <button class="suggestion" type="button" data-prompt="请根据图纸信息，帮我检查主要技术要点、尺寸标注和可能需要确认的地方。">
+              <span class="suggestion-title">分析图纸要点</span><span class="suggestion-copy">梳理技术信息与待确认内容</span>
+            </button>
+            <button class="suggestion" type="button" data-prompt="现场遇到一个需要判断的问题，请帮我列出排查思路、所需信息和建议的处理步骤。">
+              <span class="suggestion-title">讨论现场问题</span><span class="suggestion-copy">按现象梳理排查与处置步骤</span>
+            </button>
+          </div>
+        </section>
       </div>
-    </div>
-  </div>
+      <div class="composer-wrap">
+        <div id="error-notice" class="notice" role="alert" hidden></div>
+        <div class="composer">
+          <textarea id="msg-input" aria-label="输入消息" placeholder="输入你的问题…" rows="2"></textarea>
+          <div class="composer-actions">
+            <span class="composer-hint">Enter 发送 · Shift + Enter 换行</span>
+            <div class="composer-buttons">
+              <button class="button button-quiet" id="abort-btn" type="button" aria-label="停止生成">停止</button>
+              <button class="button button-primary send-button" id="send-btn" type="button">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m21 3-7.2 18-3.8-7-7-3.8L21 3Z"/><path d="M10 14 21 3"/></svg>发送
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
 </div>
 
-<script>
-// ─── State ───────────────────────────────────────────────────────────────────
-let currentSessionId = null;
-let pendingInterruptId = null; // set when the agent is awaiting approval
-let isStreaming = false;       // true while an SSE stream is active
-let currentAbortController = null; // AbortController for the active fetch
+<dialog class="dialog" id="connection-dialog" aria-labelledby="connection-title">
+  <form class="dialog-form" id="connection-form" method="dialog">
+    <h2 id="connection-title">连接设置</h2>
+    <p class="dialog-copy">如果服务要求访问令牌，请在此输入。令牌仅保存在当前浏览器会话中，也可以留空使用本机默认连接。</p>
+    <label class="field-label" for="api-token">Bearer 访问令牌</label>
+    <input class="token-input" id="api-token" name="token" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false">
+    <div class="dialog-actions">
+      <button class="button" id="connection-cancel" type="button">取消</button>
+      <button class="button button-primary" type="submit">保存并重试</button>
+    </div>
+  </form>
+</dialog>
 
-// A2UI renderer state
-let components = {};   // id → ComponentValue
-let dataModel = {};    // dataKey → string
+<script>
+'use strict';
+let currentSessionId = null;
+let pendingInterruptId = null;
+let isStreaming = false;
+let currentAbortController = null;
+let components = {};
+let dataModel = {};
 let surfaceId = null;
 let rootId = null;
+let authDialogPromise = null;
 
-// ─── A2UI Renderer ───────────────────────────────────────────────────────────
-function resetRenderer() {
-  components = {};
-  dataModel = {};
-  surfaceId = null;
-  rootId = null;
+const el = (id) => document.getElementById(id);
+const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const welcomePanel = el('welcome');
+const tokenGet = () => { try { return sessionStorage.getItem('vsjin-api-token') || ''; } catch (_) { return ''; } };
+const tokenSet = (value) => { try { sessionStorage.setItem('vsjin-api-token', value); } catch (_) {} };
+
+function showError(message) {
+  const box = el('error-notice');
+  box.textContent = message;
+  box.hidden = !message;
 }
+
+function openConnectionDialog() {
+  if (authDialogPromise) return authDialogPromise;
+  el('api-token').value = tokenGet();
+  authDialogPromise = new Promise((resolve) => {
+    const dialog = el('connection-dialog');
+    const form = el('connection-form');
+    const finish = (value) => {
+      dialog.removeEventListener('close', onClose);
+      form.removeEventListener('submit', onSubmit);
+      el('connection-cancel').removeEventListener('click', onCancel);
+      authDialogPromise = null;
+      resolve(value);
+    };
+    const onClose = () => finish(null);
+    const onCancel = () => { dialog.close(); };
+    const onSubmit = (event) => {
+      event.preventDefault();
+      const value = el('api-token').value.trim();
+      tokenSet(value);
+      dialog.close();
+      finish(value);
+    };
+    dialog.addEventListener('close', onClose, {once:true});
+    form.addEventListener('submit', onSubmit, {once:true});
+    el('connection-cancel').addEventListener('click', onCancel, {once:true});
+    dialog.showModal();
+    el('api-token').focus();
+  });
+  return authDialogPromise;
+}
+
+async function apiFetch(url, options, allowAuthPrompt) {
+  const opts = Object.assign({}, options || {});
+  const headers = new Headers(opts.headers || {});
+  const token = tokenGet();
+  if (token) headers.set('Authorization', 'Bearer ' + token);
+  opts.headers = headers;
+  let response = await fetch(url, opts);
+  if (response.status === 401 && allowAuthPrompt !== false) {
+    const updated = await openConnectionDialog();
+    if (updated === null) throw new Error('需要访问令牌才能继续连接。');
+    const retryHeaders = new Headers(options && options.headers || {});
+    if (updated) retryHeaders.set('Authorization', 'Bearer ' + updated);
+    const retryOpts = Object.assign({}, options || {}, {headers:retryHeaders});
+    response = await fetch(url, retryOpts);
+  }
+  if (response.status === 401) throw new Error('访问令牌无效或已过期，请检查连接设置。');
+  return response;
+}
+
+async function expectOK(response) {
+  if (response.ok) return response;
+  let detail = response.statusText || '请求失败';
+  try { const data = await response.clone().json(); detail = data.error || data.message || detail; } catch (_) {}
+  throw new Error(detail + '（' + response.status + '）');
+}
+
+function setRuntimeState(ready, text) {
+  const state = el('runtime-state');
+  state.innerHTML = '<span class="state-dot' + (ready ? '' : ' offline') + '"></span><span>' + esc(text) + '</span>';
+}
+
+async function loadRuntime() {
+  try {
+    const response = await expectOK(await apiFetch('/v1/runtime'));
+    const runtime = await response.json();
+    const list = el('skills-list');
+    list.replaceChildren();
+    const skills = Array.isArray(runtime.skills) ? runtime.skills : [];
+    if (!skills.length) {
+      const item = document.createElement('span'); item.className = 'skill-chip'; item.textContent = runtime.configured ? '能力准备就绪' : '能力服务尚未配置'; list.append(item);
+    } else {
+      for (const skill of skills) {
+        const item = document.createElement('span'); item.className = 'skill-chip';
+        item.textContent = skill.name || '专业能力';
+        if (skill.description) item.title = skill.description;
+        list.append(item);
+      }
+    }
+    setRuntimeState(Boolean(runtime.configured), runtime.configured ? '服务已连接' : '部分能力未配置');
+  } catch (error) {
+    setRuntimeState(false, '服务暂不可用');
+    if (error.message) showError('读取服务状态失败：' + error.message);
+  }
+}
+
+function resetRenderer() { components = {}; dataModel = {}; surfaceId = null; rootId = null; }
 
 function processA2UIMessage(msg) {
   if (msg.beginRendering) {
@@ -210,424 +403,407 @@ function processA2UIMessage(msg) {
     return;
   }
   if (msg.surfaceUpdate) {
-    for (const c of (msg.surfaceUpdate.components || [])) {
-      components[c.id] = c.component;
-    }
+    for (const component of (msg.surfaceUpdate.components || [])) components[component.id] = component.component;
     render();
     return;
   }
   if (msg.dataModelUpdate) {
-    for (const dc of (msg.dataModelUpdate.contents || [])) {
-      dataModel[dc.key] = dc.valueString || '';
-    }
+    for (const entry of (msg.dataModelUpdate.contents || [])) dataModel[entry.key] = entry.valueString || '';
     renderDataBindings();
     return;
   }
   if (msg.interruptRequest) {
     pendingInterruptId = msg.interruptRequest.interruptId;
-    renderApprovalButtons(msg.interruptRequest.description);
-    return;
+    renderApprovalButtons(msg.interruptRequest.description || '');
   }
 }
 
-// Auto-scroll only when user is already near the bottom (within 150px).
 function isNearBottom() {
-  const c = document.getElementById('chat-container');
-  return c.scrollHeight - c.scrollTop - c.clientHeight < 150;
+  const container = el('chat-container');
+  return container.scrollHeight - container.scrollTop - container.clientHeight < 150;
 }
 function scrollToBottom(force) {
-  const c = document.getElementById('chat-container');
-  if (force || isNearBottom()) c.scrollTop = c.scrollHeight;
+  const container = el('chat-container');
+  if (force || isNearBottom()) container.scrollTop = container.scrollHeight;
 }
 
 function render() {
-  const container = document.getElementById('chat-container');
-  if (!rootId) {
-    container.innerHTML = '<div class="empty-state">Select or create a session to start chatting.</div>';
-    return;
-  }
+  const container = el('chat-container');
+  if (!rootId) return;
   const near = isNearBottom();
-  container.innerHTML = renderComponent(rootId);
+  container.replaceChildren();
+  container.insertAdjacentHTML('afterbegin', renderComponent(rootId));
   scrollToBottom(near);
 }
 
-function renderComponent(id) {
-  const comp = components[id];
-  if (!comp) return '';
+function displayCaption(value) {
+  if (value === 'You') return '你';
+  if (value === 'Agent') return 'VSJin AI';
+  if (value === 'tool call') return '调用工具';
+  if (value === 'tool result') return '工具结果';
+  return value;
+}
 
-  if (comp.Column) {
-    const inner = (comp.Column.children || []).map(renderComponent).join('');
-    return `<div class="column" data-id="${esc(id)}">${inner}</div>`;
+function renderComponent(id) {
+  const component = components[id];
+  if (!component) return '';
+  if (component.Column) return '<div class="column" data-id="' + esc(id) + '">' + (component.Column.children || []).map(renderComponent).join('') + '</div>';
+  if (component.Card) {
+    const first = component.Card.children && components[component.Card.children[0]];
+    const roleColumn = first && first.Column;
+    const roleNode = roleColumn && roleColumn.children && components[roleColumn.children[0]];
+    const role = roleNode && roleNode.Text ? roleNode.Text.value || '' : '';
+    return '<div class="card" data-id="' + esc(id) + '" data-role="' + esc(role) + '">' + (component.Card.children || []).map(renderComponent).join('') + '</div>';
   }
-  if (comp.Card) {
-    // Derive role from the first Text child (role label) for styling
-    const colId = comp.Card.children && comp.Card.children[0];
-    const col = colId && components[colId];
-    let role = '';
-    if (col && col.Column && col.Column.children && col.Column.children[0]) {
-      const roleComp = components[col.Column.children[0]];
-      if (roleComp && roleComp.Text) role = roleComp.Text.value || '';
-    }
-    const inner = (comp.Card.children || []).map(renderComponent).join('');
-    return `<div class="card" data-id="${esc(id)}" data-role="${esc(role)}">${inner}</div>`;
-  }
-  if (comp.Row) {
-    const inner = (comp.Row.children || []).map(renderComponent).join('');
-    return `<div class="row" data-id="${esc(id)}">${inner}</div>`;
-  }
-  if (comp.Text) {
-    let value = comp.Text.value || '';
-    if (comp.Text.dataKey) {
-      value = dataModel[comp.Text.dataKey] || '';
-    }
-    const hint = comp.Text.usageHint || 'body';
-    if (hint === 'caption') {
-      return `<div class="caption" data-id="${esc(id)}" data-datakey="${esc(comp.Text.dataKey||'')}">${esc(value)}</div>`;
-    }
-    const html = typeof marked !== 'undefined' ? marked.parse(value || '') : esc(value);
-    return `<div class="body" data-id="${esc(id)}" data-datakey="${esc(comp.Text.dataKey||'')}">${html}</div>`;
+  if (component.Row) return '<div class="row" data-id="' + esc(id) + '">' + (component.Row.children || []).map(renderComponent).join('') + '</div>';
+  if (component.Text) {
+    const text = component.Text.dataKey ? dataModel[component.Text.dataKey] || '' : component.Text.value || '';
+    const key = esc(component.Text.dataKey || '');
+    if ((component.Text.usageHint || 'body') === 'caption') return '<div class="caption" data-id="' + esc(id) + '" data-datakey="' + key + '">' + esc(displayCaption(text)) + '</div>';
+    return '<div class="body" data-id="' + esc(id) + '" data-datakey="' + key + '">' + renderMarkdown(text) + '</div>';
   }
   return '';
 }
 
-// Efficient update: only re-render Text nodes whose data binding changed
 function renderDataBindings() {
-  const container = document.getElementById('chat-container');
-  const bound = container.querySelectorAll('[data-datakey]');
-  bound.forEach(el => {
-    const key = el.getAttribute('data-datakey');
-    if (!key) return;
+  for (const node of el('chat-container').querySelectorAll('[data-datakey]')) {
+    const key = node.getAttribute('data-datakey');
+    if (!key) continue;
     const value = dataModel[key] || '';
-    if (el.classList.contains('caption')) {
-      if (el.textContent !== value) el.textContent = value;
-    } else {
-      const html = typeof marked !== 'undefined' ? marked.parse(value) : esc(value);
-      if (el.innerHTML !== html) {
-        el.innerHTML = html;
-        scrollToBottom(false);
+    if (node.classList.contains('caption')) node.textContent = displayCaption(value);
+    else {
+      const html = renderMarkdown(value);
+      if (node.innerHTML !== html) { node.innerHTML = html; scrollToBottom(false); }
+    }
+  }
+}
+
+function safeHref(raw) {
+  try {
+    const parsed = new URL(raw.replace(/&amp;/g, '&'));
+    return ['http:', 'https:', 'mailto:'].includes(parsed.protocol) ? parsed.href : null;
+  } catch (_) { return null; }
+}
+
+function inlineMarkdown(raw) {
+  const codeParts = [];
+  let escaped = esc(raw).replace(/`([^`]+)`/g, (_, code) => {
+    const marker = '\u0000' + codeParts.length + '\u0000';
+    codeParts.push('<code>' + code + '</code>');
+    return marker;
+  });
+  escaped = escaped.replace(/\[([^\]]+)\]\(([^\s)]+)(?:\s+"([^"]*)")?\)/g, (match, label, href, title) => {
+    const safe = safeHref(href);
+    if (!safe) return label;
+    return '<a href="' + esc(safe) + '"' + (title ? ' title="' + esc(title) + '"' : '') + ' target="_blank" rel="noopener noreferrer">' + label + '</a>';
+  });
+  escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/__(.+?)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>').replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>')
+    .replace(/~~(.+?)~~/g, '<del>$1</del>');
+  return escaped.replace(/\u0000(\d+)\u0000/g, (_, index) => codeParts[Number(index)] || '');
+}
+
+function renderMarkdown(source) {
+  const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let paragraph = [];
+  let listType = '';
+  let listItems = [];
+  let code = null;
+  const flushParagraph = () => { if (paragraph.length) { out.push('<p>' + paragraph.map(inlineMarkdown).join('<br>') + '</p>'); paragraph = []; } };
+  const flushList = () => { if (listItems.length) { out.push('<' + listType + '>' + listItems.map((item) => '<li>' + inlineMarkdown(item) + '</li>').join('') + '</' + listType + '>'); listItems = []; listType = ''; } };
+  const tableCells = (line) => {
+    const text = line.trim();
+    const start = text.startsWith('|') ? 1 : 0;
+    const end = text.endsWith('|') && text[text.length - 2] !== '\\' ? text.length - 1 : text.length;
+    const cells = [];
+    let cell = '';
+    for (let index = start; index < end; index++) {
+      if (text[index] === '\\' && text[index + 1] === '|') { cell += '|'; index++; }
+      else if (text[index] === '|') { cells.push(cell.trim()); cell = ''; }
+      else cell += text[index];
+    }
+    cells.push(cell.trim());
+    return cells;
+  };
+  const isTableSeparator = (cell) => /^:?-{3,}:?$/.test(cell);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    const fence = line.match(/^\s*```/);
+    if (fence) {
+      flushParagraph(); flushList();
+      if (code === null) code = [];
+      else { out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); code = null; }
+      continue;
+    }
+    if (code !== null) { code.push(line); continue; }
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+    if (lineIndex + 1 < lines.length) {
+      const headers = tableCells(line);
+      const separators = tableCells(lines[lineIndex + 1]);
+      if (headers.length > 1 && headers.length === separators.length && separators.every(isTableSeparator)) {
+        flushParagraph(); flushList();
+        const head = '<thead><tr>' + headers.map((cell) => '<th>' + inlineMarkdown(cell) + '</th>').join('') + '</tr></thead>';
+        const rows = [];
+        lineIndex++;
+        while (lineIndex + 1 < lines.length && lines[lineIndex + 1].trim()) {
+          const cells = tableCells(lines[lineIndex + 1]);
+          if (cells.length < 2) break;
+          lineIndex++;
+          const normalized = Array.from({length: headers.length}, (_, index) => cells[index] || '');
+          rows.push('<tr>' + normalized.map((cell) => '<td>' + inlineMarkdown(cell) + '</td>').join('') + '</tr>');
+        }
+        out.push('<table>' + head + '<tbody>' + rows.join('') + '</tbody></table>');
+        continue;
       }
     }
-  });
+    const heading = line.match(/^\s*(#{1,4})\s+(.+)$/);
+    if (heading) { flushParagraph(); flushList(); const level = heading[1].length; out.push('<h' + level + '>' + inlineMarkdown(heading[2]) + '</h' + level + '>'); continue; }
+    const item = line.match(/^\s*(?:[-+*]|(\d+)[.)])\s+(.+)$/);
+    if (item) {
+      flushParagraph(); const nextType = item[1] ? 'ol' : 'ul';
+      if (listType && listType !== nextType) flushList();
+      listType = nextType; listItems.push(item[2]); continue;
+    }
+    const quote = line.match(/^\s*&gt;\s?(.*)$/);
+    if (quote) { flushParagraph(); flushList(); out.push('<blockquote>' + inlineMarkdown(quote[1]) + '</blockquote>'); continue; }
+    flushList(); paragraph.push(line);
+  }
+  flushParagraph(); flushList();
+  if (code !== null) out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>');
+  return out.join('');
 }
 
-function esc(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ─── Approval UI ─────────────────────────────────────────────────────────────
-
-// Appends approve/reject buttons below the last card in the chat container.
 function renderApprovalButtons(description) {
-  const container = document.getElementById('chat-container');
-  const div = document.createElement('div');
-  div.id = 'approval-bar';
-  div.style.padding = '10px 20px';
-  div.innerHTML = `
-    <div class="approval-buttons">
-      <button class="approval-btn-approve" id="btn-approve">✓ Approve</button>
-      <button class="approval-btn-reject" id="btn-reject">✗ Reject</button>
-    </div>`;
-  container.appendChild(div);
-  scrollToBottom(true);
-
-  document.getElementById('btn-approve').addEventListener('click', () => sendApproval(true));
-  document.getElementById('btn-reject').addEventListener('click', () => sendApproval(false));
+  removeApprovalButtons();
+  const container = el('chat-container');
+  const bar = document.createElement('div'); bar.id = 'approval-bar'; bar.className = 'card';
+  bar.dataset.role = 'approval needed';
+  const body = document.createElement('div'); body.className = 'body'; body.textContent = description;
+  const actions = document.createElement('div'); actions.className = 'approval-buttons';
+  const approve = document.createElement('button'); approve.className = 'button button-primary'; approve.type = 'button'; approve.textContent = '批准'; approve.addEventListener('click', () => sendApproval(true));
+  const reject = document.createElement('button'); reject.className = 'button'; reject.type = 'button'; reject.textContent = '拒绝'; reject.addEventListener('click', () => sendApproval(false));
+  actions.append(approve, reject); bar.append(body, actions); container.append(bar); scrollToBottom(true);
 }
+function removeApprovalButtons() { const bar = el('approval-bar'); if (bar) bar.remove(); }
 
-function removeApprovalButtons() {
-  const bar = document.getElementById('approval-bar');
-  if (bar) bar.remove();
+function setStreamingState(streaming) {
+  isStreaming = streaming;
+  el('abort-btn').style.display = streaming ? 'inline-flex' : 'none';
 }
 
 async function sendApproval(approved) {
   if (!pendingInterruptId || !currentSessionId) return;
-  removeApprovalButtons();
-
+  removeApprovalButtons(); showError('');
   let reason = '';
-  if (!approved) {
-    reason = window.prompt('Reason for rejection (optional):') || '';
-  }
-
-  const abortController = new AbortController();
-  currentAbortController = abortController;
-  setStreamingState(true);
-
+  if (!approved) reason = window.prompt('拒绝原因（可选）') || '';
+  const controller = new AbortController(); currentAbortController = controller; setStreamingState(true);
+  let approvalSubmitted = false;
   try {
-    const res = await fetch(`/sessions/${currentSessionId}/approve`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({approved, reason}),
-      signal: abortController.signal,
-    });
+    const response = await expectOK(await apiFetch('/sessions/' + encodeURIComponent(currentSessionId) + '/approve', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({approved, reason}), signal:controller.signal
+    }));
+    approvalSubmitted = true;
+    pendingInterruptId = null;
+    await consumeSSEStream(response, controller.signal);
+  } catch (error) {
+    if (!controller.signal.aborted) showError((approvalSubmitted ? '审批已提交，但后续回复连接中断：' : '提交审批失败：') + error.message);
+  } finally {
+    if (currentAbortController === controller) { currentAbortController = null; setStreamingState(false); }
+    loadSessions().catch((error) => showError('刷新会话失败：' + error.message));
+  }
+}
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({error: res.statusText}));
-      alert('Approve error: ' + (err.error || res.statusText));
+async function loadSessions(autoSelectFirst) {
+  const response = await expectOK(await apiFetch('/sessions'));
+  const sessions = await response.json();
+  const list = el('session-list'); list.replaceChildren();
+  if (!sessions || !sessions.length) {
+    const empty = document.createElement('div'); empty.className = 'session-empty'; empty.textContent = '新建会话后，你的对话会显示在这里。'; list.append(empty);
+  }
+  for (const session of sessions || []) {
+    const item = document.createElement('div'); item.className = 'session-item' + (session.id === currentSessionId ? ' active' : '');
+    const select = document.createElement('button'); select.type = 'button'; select.className = 'session-select';
+    select.textContent = session.title || String(session.id || '').slice(0, 8); select.setAttribute('aria-current', session.id === currentSessionId ? 'page' : 'false');
+    select.addEventListener('click', () => selectSession(session.id));
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'delete-session'; remove.setAttribute('aria-label', '删除会话：' + select.textContent); remove.title = '删除会话';
+    remove.innerHTML = '<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></svg>';
+    remove.addEventListener('click', async () => {
+      if (!window.confirm('确定删除这段会话吗？')) return;
+      try {
+        await expectOK(await apiFetch('/sessions/' + encodeURIComponent(session.id), {method:'DELETE'}));
+        if (currentSessionId === session.id) { currentSessionId = null; resetRenderer(); showWelcome(); }
+        await loadSessions();
+      } catch (error) { showError('删除会话失败：' + error.message); }
+    });
+    item.append(select, remove); list.append(item);
+  }
+  if (autoSelectFirst && !currentSessionId && sessions && sessions.length) await selectSession(sessions[0].id);
+}
+
+function showWelcome() {
+  const container = el('chat-container');
+  container.replaceChildren();
+  if (welcomePanel) container.append(welcomePanel);
+  el('page-title').textContent = '智能工作台';
+}
+
+async function selectSession(id) {
+  closeMobileSessions();
+  currentSessionId = id; pendingInterruptId = null; resetRenderer(); showError('');
+  el('page-title').textContent = '会话';
+  const container = el('chat-container'); container.innerHTML = '<div class="empty-state" role="status">正在载入会话…</div>';
+  loadSessions().catch((error) => showError('读取会话列表失败：' + error.message));
+  try {
+    const response = await expectOK(await apiFetch('/sessions/' + encodeURIComponent(id) + '/render'));
+    const text = await response.text();
+    if (currentSessionId !== id) return;
+    container.replaceChildren();
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim(); if (!trimmed) continue;
+      try { processA2UIMessage(JSON.parse(trimmed)); } catch (_) {}
+    }
+    if (!rootId && !container.children.length) {
+      const empty = document.createElement('div'); empty.className = 'empty-state';
+      empty.innerHTML = '<strong>开始一段新对话</strong>输入问题，或从你的工作资料、图纸和现场情况开始。'; container.append(empty);
+    }
+  } catch (error) {
+    if (currentSessionId === id) { container.replaceChildren(); showError('读取会话内容失败：' + error.message); }
+  }
+}
+
+async function createSession() {
+  closeMobileSessions();
+  showError('');
+  try {
+    const response = await expectOK(await apiFetch('/sessions', {method:'POST'}));
+    const data = await response.json(); currentSessionId = data.id; pendingInterruptId = null; resetRenderer();
+    el('chat-container').replaceChildren(); el('page-title').textContent = '新会话';
+    await loadSessions(); el('msg-input').focus();
+  } catch (error) { showError('新建会话失败：' + error.message); }
+}
+
+function showQueuedMessage(message) {
+  const container = el('chat-container'); removeQueuedMessage();
+  const wrapper = document.createElement('div'); wrapper.id = 'preempt-queue';
+  const card = document.createElement('div'); card.className = 'card'; card.dataset.role = 'You';
+  const column = document.createElement('div'); column.className = 'column';
+  const caption = document.createElement('div'); caption.className = 'caption'; caption.textContent = '你';
+  const body = document.createElement('div'); body.className = 'body'; body.textContent = message;
+  const chip = document.createElement('div'); chip.className = 'preempt-chip'; chip.textContent = '正在切换到新问题…';
+  column.append(caption, body); card.append(column); wrapper.append(card, chip); container.append(wrapper); scrollToBottom(true);
+}
+function removeQueuedMessage() { const queued = document.getElementById('preempt-queue'); if (queued) queued.remove(); }
+
+async function consumeSSEStream(response, signal) {
+  if (!response.body) throw new Error('当前浏览器无法读取实时回复。');
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let terminal = false;
+  function consume(payload) {
+    if (!payload.trim()) return;
+    let message; try { message = JSON.parse(payload); } catch (_) { return; }
+    if (message.event === 'preempted') { terminal = true; removeQueuedMessage(); return; }
+    if (message.event && message.event.startsWith('run.')) {
+      terminal = true;
+      if (message.event === 'run.failed') showError(message.error || '本轮处理未完成，请重试。');
       return;
     }
-
-    pendingInterruptId = null;
-    await consumeSSEStream(res, abortController.signal);
-  } catch (err) {
-    if (abortController.signal.aborted) return;
-    console.error('Approval error:', err);
-  } finally {
-    if (currentAbortController === abortController) {
-      currentAbortController = null;
-      setStreamingState(false);
-    }
-    await loadSessions();
+    if (message.error) { terminal = true; showError(message.error); return; }
+    if (message.beginRendering) removeQueuedMessage();
+    processA2UIMessage(message);
   }
-}
-
-// ─── Session Management ───────────────────────────────────────────────────────
-async function loadSessions(autoSelectFirst) {
-  const res = await fetch('/sessions');
-  const sessions = await res.json();
-  const list = document.getElementById('session-list');
-  list.innerHTML = '';
-  for (const sess of (sessions || [])) {
-    const item = document.createElement('div');
-    item.className = 'session-item' + (sess.id === currentSessionId ? ' active' : '');
-    item.dataset.id = sess.id;
-    item.innerHTML = `<span class="title">${esc(sess.title || sess.id.slice(0,8))}</span><button class="del-btn" title="Delete">✕</button>`;
-    item.querySelector('.title').addEventListener('click', () => selectSession(sess.id));
-    item.querySelector('.del-btn').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!confirm('Delete this session?')) return;
-      await fetch(`/sessions/${sess.id}`, {method:'DELETE'});
-      if (currentSessionId === sess.id) {
-        currentSessionId = null;
-        resetRenderer();
-        document.getElementById('chat-container').innerHTML = '<div class="empty-state">Select or create a session to start chatting.</div>';
-        document.getElementById('upload-info').textContent = '';
-      }
-      loadSessions();
-    });
-    list.appendChild(item);
-  }
-  // On initial load: auto-select the first session so the user can type right away
-  if (autoSelectFirst && !currentSessionId && sessions && sessions.length > 0) {
-    selectSession(sessions[0].id);
-  }
-}
-
-function selectSession(id) {
-  currentSessionId = id;
-  pendingInterruptId = null;
-  resetRenderer();
-  document.getElementById('chat-container').innerHTML = '<div class="empty-state">Loading…</div>';
-  document.getElementById('upload-info').textContent = '';
-  loadSessions();
-  // Fetch and render the session's existing history immediately.
-  fetch(`/sessions/${id}/render`)
-    .then(res => res.text())
-    .then(text => {
-      for (const line of text.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try { processA2UIMessage(JSON.parse(trimmed)); } catch (_) {}
-      }
-    })
-    .catch(() => render());
-}
-
-document.getElementById('new-session-btn').addEventListener('click', async () => {
-  const res = await fetch('/sessions', {method:'POST'});
-  const {id} = await res.json();
-  currentSessionId = id;
-  resetRenderer();
-  document.getElementById('chat-container').innerHTML = '';
-  document.getElementById('upload-info').textContent = '';
-  await loadSessions();
-});
-
-// ─── File Upload ──────────────────────────────────────────────────────────────
-document.getElementById('file-input').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file || !currentSessionId) return;
-  const info = document.getElementById('upload-info');
-  info.textContent = 'Uploading…';
-  const fd = new FormData();
-  fd.append('file', file);
-  try {
-    const res = await fetch(`/sessions/${currentSessionId}/docs`, {method:'POST', body:fd});
-    const data = await res.json();
-    if (data.path) {
-      info.textContent = `✓ ${data.name} → ${data.path}`;
-    } else {
-      info.textContent = data.error || 'Upload failed';
-    }
-  } catch (err) {
-    info.textContent = `Upload error: ${err}`;
-  }
-  e.target.value = '';
-});
-
-// ─── Chat ─────────────────────────────────────────────────────────────────────
-
-function setStreamingState(streaming) {
-  isStreaming = streaming;
-  document.getElementById('abort-btn').style.display = streaming ? 'inline-block' : 'none';
-}
-
-// Shows a queued user message with a preempt indicator while waiting for safe point.
-function showQueuedMessage(message) {
-  const container = document.getElementById('chat-container');
-  // Remove any existing preempt chip.
-  const existing = container.querySelector('.preempt-chip');
-  if (existing) existing.remove();
-
-  const wrapper = document.createElement('div');
-  wrapper.id = 'preempt-queue';
-  wrapper.innerHTML = `
-    <div class="card" data-role="You" style="margin-left:auto;background:#eff6ff;">
-      <div class="column"><div class="caption" style="color:#2563eb">You</div>
-      <div class="body">${esc(message)}</div></div>
-    </div>
-    <div class="preempt-chip">Preempting current turn…</div>`;
-  container.appendChild(wrapper);
-  scrollToBottom(true);
-}
-
-function removeQueuedMessage() {
-  const q = document.getElementById('preempt-queue');
-  if (q) q.remove();
-}
-
-// Reads an SSE response body and feeds A2UI messages to the renderer.
-async function consumeSSEStream(res, signal) {
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   try {
     while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, {stream: true});
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
+      const chunk = await reader.read(); if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, {stream:true});
+      const lines = buffer.split('\n'); buffer = lines.pop();
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('data:')) {
-          const jsonStr = trimmed.slice(5).trimStart();
-          try {
-            const msg = JSON.parse(jsonStr);
-            // Server signals this handler's turn was superseded by a newer preempt.
-            if (msg.event === 'preempted') { removeQueuedMessage(); return; }
-            // Once the new stream starts rendering, clear any queued indicator.
-            if (msg.beginRendering) removeQueuedMessage();
-            processA2UIMessage(msg);
-          } catch (_) {}
-        }
+        const trimmed = line.trim(); if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trimStart();
+        consume(payload);
       }
     }
-  } catch (err) {
-    if (signal && signal.aborted) return; // expected abort, not an error
-    console.error('Stream error:', err);
+    buffer += decoder.decode();
+    if (buffer.trim().startsWith('data:')) {
+      consume(buffer.trim().slice(5).trimStart());
+    }
+    if (!terminal && !(signal && signal.aborted)) showError('连接已结束，但未收到处理完成状态，请刷新后确认。');
+  } catch (error) {
+    if (!signal || !signal.aborted) throw error;
   }
 }
 
 async function sendMessage() {
-  const input = document.getElementById('msg-input');
-  const sendBtn = document.getElementById('send-btn');
-  const message = input.value.trim();
-  if (!message) return;
-
-  // Auto-create a session if none is active
-  if (!currentSessionId) {
-    const res = await fetch('/sessions', {method:'POST'});
-    const {id} = await res.json();
-    currentSessionId = id;
-    resetRenderer();
-    await loadSessions();
-  }
-
-  input.value = '';
-  pendingInterruptId = null;
-  removeApprovalButtons();
-
-  // If already streaming, this is a preempt — show queued indicator but
-  // do NOT abort the old SSE reader. Let the old turn's stream keep
-  // rendering (tool calls, model output) until the server closes it when
-  // the preempt takes effect. The new fetch will open a second concurrent
-  // SSE connection; the server starts keepalives immediately so it stays
-  // alive while the old turn drains.
-  const isPreempt = isStreaming;
-  if (isPreempt) {
-    showQueuedMessage(message);
-    // Detach the old controller — its consumeSSEStream will finish
-    // naturally when the server closes the old stream.
-    currentAbortController = null;
-  }
-
-  const abortController = new AbortController();
-  currentAbortController = abortController;
-  setStreamingState(true);
-
+  const input = el('msg-input'); const sendButton = el('send-btn'); const message = input.value.trim();
+  if (!message || sendButton.disabled) return;
+  showError(''); sendButton.disabled = true;
   try {
-    const res = await fetch(`/sessions/${currentSessionId}/chat`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message}),
-      signal: abortController.signal,
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({error: res.statusText}));
-      alert('Error: ' + (err.error || res.statusText));
-      return;
+    if (!currentSessionId) {
+      const created = await expectOK(await apiFetch('/sessions', {method:'POST'}));
+      const data = await created.json(); currentSessionId = data.id; resetRenderer(); await loadSessions();
     }
-
-    await consumeSSEStream(res, abortController.signal);
-  } catch (err) {
-    if (abortController.signal.aborted) return; // expected, not an error
-    console.error('Chat error:', err);
+  } catch (error) { sendButton.disabled = false; showError('无法开始对话：' + error.message); return; }
+  pendingInterruptId = null; removeApprovalButtons();
+  const preempt = isStreaming;
+  if (preempt) { showQueuedMessage(message); currentAbortController = null; }
+  const controller = new AbortController(); currentAbortController = controller; setStreamingState(true);
+  let messageAccepted = false;
+  try {
+    const response = await expectOK(await apiFetch('/sessions/' + encodeURIComponent(currentSessionId) + '/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message}), signal:controller.signal
+    }));
+    messageAccepted = true;
+    if (input.value.trim() === message) input.value = '';
+    sendButton.disabled = false;
+    await consumeSSEStream(response, controller.signal);
+  } catch (error) {
+    if (!controller.signal.aborted) showError((messageAccepted ? '消息已发送，但回复连接中断：' : '发送失败，消息仍保留在输入框中：') + error.message);
   } finally {
-    if (currentAbortController === abortController) {
-      currentAbortController = null;
-      setStreamingState(false);
-    }
-    await loadSessions();
+    sendButton.disabled = false;
+    if (currentAbortController === controller) { currentAbortController = null; setStreamingState(false); }
+    loadSessions().catch((error) => showError('刷新会话失败：' + error.message));
   }
 }
 
-// ─── Abort ────────────────────────────────────────────────────────────────────
-document.getElementById('abort-btn').addEventListener('click', async () => {
+async function abortGeneration() {
   if (!currentSessionId) return;
-  // Abort the SSE reader client-side.
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-  }
+  const id = currentSessionId;
+  if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
   setStreamingState(false);
-  // Tell the server to stop the loop immediately.
-  try {
-    await fetch(`/sessions/${currentSessionId}/abort`, {method: 'POST'});
-  } catch (err) {
-    console.error('Abort error:', err);
-  }
-  // Show a visual confirmation in the chat.
-  const container = document.getElementById('chat-container');
-  const notice = document.createElement('div');
-  notice.className = 'card';
-  notice.setAttribute('data-role', 'error');
-  notice.innerHTML = '<div class="column"><div class="caption">ABORTED</div><div class="body">Agent run was stopped by user.</div></div>';
-  container.appendChild(notice);
-  scrollToBottom(true);
-});
+  try { await expectOK(await apiFetch('/sessions/' + encodeURIComponent(id) + '/abort', {method:'POST'})); }
+  catch (error) { showError('停止生成失败：' + error.message); }
+  const notice = document.createElement('div'); notice.className = 'card'; notice.dataset.role = 'tool result';
+  const body = document.createElement('div'); body.className = 'body'; body.textContent = '已停止本次生成。'; notice.append(body); el('chat-container').append(notice); scrollToBottom(true);
+}
 
-document.getElementById('send-btn').addEventListener('click', sendMessage);
-document.getElementById('msg-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+el('new-session-btn').addEventListener('click', createSession);
+el('mobile-new-session').addEventListener('click', createSession);
+el('mobile-sessions-toggle').addEventListener('click', () => {
+  const sidebar = document.querySelector('.sidebar');
+  const open = sidebar.classList.toggle('mobile-open');
+  el('mobile-sessions-toggle').setAttribute('aria-expanded', String(open));
+  el('mobile-sessions-toggle').setAttribute('aria-label', open ? '收起会话列表' : '展开会话列表');
 });
+el('connection-btn').addEventListener('click', openConnectionDialog);
+el('mobile-connection-btn').addEventListener('click', openConnectionDialog);
+el('send-btn').addEventListener('click', sendMessage);
+el('abort-btn').addEventListener('click', abortGeneration);
+function closeMobileSessions() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar.classList.contains('mobile-open')) return;
+  sidebar.classList.remove('mobile-open');
+  el('mobile-sessions-toggle').setAttribute('aria-expanded', 'false');
+  el('mobile-sessions-toggle').setAttribute('aria-label', '展开会话列表');
+}
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMobileSessions(); });
+el('msg-input').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); }
+});
+document.querySelectorAll('[data-prompt]').forEach((button) => button.addEventListener('click', () => {
+  el('msg-input').value = button.dataset.prompt; el('msg-input').focus();
+}));
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
-loadSessions(true); // auto-select first session if one exists
+loadRuntime();
+loadSessions(true).catch((error) => showError('读取会话失败：' + error.message));
 </script>
 </body>
 </html>

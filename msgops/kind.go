@@ -25,7 +25,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// Kind identifies the message representation used by a chatwitheino run.
+// Kind identifies the message representation used by a VSJin AI run.
 type Kind string
 
 const (

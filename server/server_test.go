@@ -27,9 +27,9 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
-	adkstore "github.com/cloudwego/eino-examples/adk/common/store"
-	commontool "github.com/cloudwego/eino-examples/adk/common/tool"
-	"github.com/cloudwego/eino-examples/quickstart/chatwitheino/mem"
+	commontool "github.com/vsjin/vsjin-ai/internal/approval"
+	adkstore "github.com/vsjin/vsjin-ai/internal/checkpoint"
+	"github.com/vsjin/vsjin-ai/mem"
 )
 
 // ---------------------------------------------------------------------------
@@ -121,8 +121,6 @@ func newTestServer(t *testing.T, agent adk.TypedAgent[*schema.Message]) (*Server
 		CheckPointStore: adkstore.NewInMemoryStore(),
 		Store:           store,
 		WorkspaceDir:    t.TempDir(),
-		ProjectRoot:     t.TempDir(),
-		ExamplesDir:     t.TempDir(),
 		Port:            "0", // unused — we test via the handler functions directly
 	})
 
@@ -132,7 +130,7 @@ func newTestServer(t *testing.T, agent adk.TypedAgent[*schema.Message]) (*Server
 // createSession creates a session via the Store directly.
 func createSession(t *testing.T, srv *Server[*schema.Message]) string {
 	t.Helper()
-	sess, err := srv.cfg.Store.GetOrCreate("test-" + time.Now().Format("150405.000"))
+	sess, err := srv.cfg.Store.GetOrCreate("test-" + time.Now().Format("150405000000000"))
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

@@ -1,0 +1,164 @@
+{
+  "groupKeys": ["knowledge.base"],
+  "operations": [
+    {
+      "id": "knowledge.search",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.search",
+      "groupKey": "knowledge.base",
+      "description": "检索当前用户可见的企业已发布知识并返回命中证据",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"},
+          "mode": {"type": "string"},
+          "topK": {"type": "integer"},
+          "limit": {"type": "integer"},
+          "scoreThreshold": {"type": "number"},
+          "matchFields": {"type": "array", "items": {"type": "string"}},
+          "fileVersionIds": {"type": "array", "items": {"type": "integer"}},
+          "directoryRef": {"type": "string"},
+          "filters": {
+            "type": "object",
+            "properties": {
+              "createdFrom": {"type": "string", "format": "date-time"},
+              "createdTo": {"type": "string", "format": "date-time"},
+              "fileTypes": {"type": "array", "items": {"type": "string"}},
+              "page": {"type": "integer"},
+              "relativePathPrefix": {"type": "string"},
+              "sectionPath": {"type": "string"},
+              "sheet": {"type": "string"},
+              "slide": {"type": "integer"},
+              "sourceTypes": {"type": "array", "items": {"type": "string"}},
+              "tags": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "includeParent": {"type": "boolean"},
+              "includeScoreDetails": {"type": "boolean"},
+              "matchFields": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "knowledge.get_chunk_context",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.get_chunk_context",
+      "groupKey": "knowledge.base",
+      "description": "读取命中片段及其父片段和邻居",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chunkId": {"type": "integer", "minimum": 1},
+          "documentOffset": {"type": "integer"},
+          "fileVersionId": {"type": "integer", "minimum": 1},
+          "knowledgeBaseId": {"type": "integer"},
+          "neighborCount": {"type": "integer"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "chunkId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "knowledge.get_source",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.get_source",
+      "groupKey": "knowledge.base",
+      "description": "读取授权来源及发布状态",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sourceId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "knowledge.get_file_preview",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.get_file_preview",
+      "groupKey": "knowledge.base",
+      "description": "获取受控原文件预览入口",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {"type": "integer"},
+          "sheet": {"type": "string"},
+          "slide": {"type": "integer"},
+          "sourceId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "knowledge.get_spreadsheet_schema",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.get_spreadsheet_schema",
+      "groupKey": "knowledge.base",
+      "description": "读取表格 Sheet 和列结构",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sheet": {"type": "string"},
+          "sourceId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "knowledge.query_spreadsheet_rows",
+      "method": "POST",
+      "path": "/knowledge-base/skill-tools/knowledge.query_spreadsheet_rows",
+      "groupKey": "knowledge.base",
+      "description": "按表格列条件查询物理行并返回扫描游标",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cursor": {"type": "string"},
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "column": {"type": "integer", "minimum": 1},
+                "operator": {"type": "string", "enum": ["equals", "contains"]},
+                "value": {"type": "string", "minLength": 1}
+              },
+              "required": ["column", "operator", "value"],
+              "additionalProperties": false
+            },
+            "maxItems": 4
+          },
+          "limit": {"type": "integer", "minimum": 0, "maximum": 100},
+          "sheet": {"type": "string"},
+          "sourceId": {"type": "string"},
+          "scopeType": {"type": "string", "enum": ["scai_project"]},
+          "scopeId": {"type": "string", "pattern": "^[0-9]*[1-9][0-9]*$"}
+        },
+        "required": ["scopeType", "scopeId", "sourceId", "sheet"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

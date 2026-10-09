@@ -1,0 +1,25 @@
+Final Go test (exit 0):
+ok  	github.com/vsjin/vsjin-ai	0.170s
+ok  	github.com/vsjin/vsjin-ai/a2ui	0.170s
+ok  	github.com/vsjin/vsjin-ai/chatmodel	0.864s
+?   	github.com/vsjin/vsjin-ai/helpers	[no test files]
+ok  	github.com/vsjin/vsjin-ai/internal/appconfig	0.035s
+?   	github.com/vsjin/vsjin-ai/internal/approval	[no test files]
+ok  	github.com/vsjin/vsjin-ai/internal/checkpoint	0.062s
+ok  	github.com/vsjin/vsjin-ai/mem	0.284s
+ok  	github.com/vsjin/vsjin-ai/msgops	0.139s
+?   	github.com/vsjin/vsjin-ai/policy	[no test files]
+ok  	github.com/vsjin/vsjin-ai/runtimewire	0.458s
+ok  	github.com/vsjin/vsjin-ai/server	0.928s
+ok  	github.com/vsjin/vsjin-ai/skills	0.892s
+ok  	github.com/vsjin/vsjin-ai/static	0.091s
+
+Final go vet: exit 0, no diagnostics
+Final go build -o bin/vsjin-ai: exit 0
+Node renderer tests: 4 passed
+Race tests (prior implementation unchanged):
+ok  	github.com/vsjin/vsjin-ai/runtimewire	1.038s
+ok  	github.com/vsjin/vsjin-ai/server	1.574s
+ok  	github.com/vsjin/vsjin-ai/mem	1.079s
+ok  	github.com/vsjin/vsjin-ai/skills	1.160s
+ok  	github.com/vsjin/vsjin-ai/internal/checkpoint	1.015s

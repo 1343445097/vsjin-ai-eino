@@ -29,7 +29,7 @@ const (
 	itemStatusCompleted = "completed"
 )
 
-// NormalizeForSession returns a provider-safe message for chatwitheino's JSONL
+// NormalizeForSession returns a provider-safe message for VSJin AI's JSONL
 // session store. Agentic model implementations attach Responses API item IDs to
 // content blocks, and those IDs are required when replaying provider-native
 // output items such as assistant messages, reasoning blocks, and tool calls.
