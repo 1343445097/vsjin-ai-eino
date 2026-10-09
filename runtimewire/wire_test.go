@@ -42,7 +42,9 @@ func request(id string) Request {
 func TestRunModelToolAndFinalThroughRealHTTP(t *testing.T) {
 	server := httptest.NewServer(New(testToken))
 	defer server.Close()
-	response := post(t, server.URL+"/v1/runs", request("round-trip"), testToken, "")
+	req := request("round-trip")
+	req.MaxIterations = 2
+	response := post(t, server.URL+"/v1/runs", req, testToken, "")
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
 		data, _ := io.ReadAll(response.Body)
@@ -69,15 +71,24 @@ func TestRunModelToolAndFinalThroughRealHTTP(t *testing.T) {
 		switch event.Type {
 		case "model.request":
 			modelCalls++
-			if len(event.Tools) != 1 || event.Tools[0].Function.Name != "skills_read" {
-				t.Fatal("tool grant changed")
-			}
 			msg := Message{Role: "assistant", Content: "<think>内部证据核对</think>图纸给定标高为45.000m，不能据此免除其他区域要求。"}
 			if modelCalls == 1 {
+				if len(event.Tools) != 1 || event.Tools[0].Function.Name != "skills_read" {
+					t.Fatal("tool grant changed")
+				}
 				msg.Content = "先读取授权技能"
 				msg.ToolCalls = []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{"skill":"drawing-analysis"}`}}}
 			} else {
-				if event.Messages[len(event.Messages)-1].Role != "tool" {
+				if len(event.Tools) != 0 {
+					t.Fatal("final answer round must not receive tools")
+				}
+				toolEvidence := false
+				for _, message := range event.Messages {
+					if message.Role == "tool" {
+						toolEvidence = true
+					}
+				}
+				if !toolEvidence {
 					t.Fatal("tool evidence did not reach model")
 				}
 			}
@@ -126,6 +137,111 @@ func TestRunModelToolAndFinalThroughRealHTTP(t *testing.T) {
 	if !completed || modelCalls != 2 || toolCalls != 1 {
 		t.Fatalf("incomplete chain completed=%v model=%d tool=%d", completed, modelCalls, toolCalls)
 	}
+}
+
+func TestRunForwardsModelDeltasBeforeFinalResponse(t *testing.T) {
+	server := httptest.NewServer(New(testToken))
+	defer server.Close()
+	req := request("incremental")
+	req.MaxIterations = 2
+	response := post(t, server.URL+"/v1/runs", req, testToken, "")
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	var runID, requestID string
+	var answer strings.Builder
+	deltas := []string{"第一段", "第二段", "第三段"}
+	seenDeltas, modelCalls := 0, 0
+	completed := false
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "data: ") {
+			continue
+		}
+		var event Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &event); err != nil {
+			t.Fatal(err)
+		}
+		runID = event.RunID
+		switch event.Type {
+		case "model.request":
+			modelCalls++
+			requestID = event.RequestID
+			if modelCalls == 1 {
+				if len(event.Tools) != 1 {
+					t.Fatal("decision round did not include tools")
+				}
+				draft := Message{Role: "assistant", Content: "draft answer"}
+				result := post(t, server.URL+"/v1/runs/"+runID+"/responses", Response{RequestID: requestID, Message: &draft}, testToken, runToken)
+				result.Body.Close()
+				if result.StatusCode != http.StatusNoContent {
+					t.Fatalf("decision callback status=%d", result.StatusCode)
+				}
+				continue
+			}
+			if modelCalls != 2 || len(event.Tools) != 0 {
+				t.Fatalf("answer round=%d tools=%d", modelCalls, len(event.Tools))
+			}
+			for i, delta := range deltas {
+				result := post(t, server.URL+"/v1/runs/"+runID+"/responses", Response{RequestID: requestID, Delta: delta}, testToken, runToken)
+				result.Body.Close()
+				if result.StatusCode != http.StatusNoContent {
+					t.Fatalf("delta callback %d status=%d", i, result.StatusCode)
+				}
+				want := strings.Join(deltas[:i+1], "")
+				for answer.String() != want {
+					line, err := scannerLine(t, scanner)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if strings.HasPrefix(line, "data: ") {
+						var streamed Event
+						if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &streamed); err != nil {
+							t.Fatal(err)
+						}
+						if streamed.Type == "message.delta" {
+							answer.WriteString(streamed.Delta)
+							seenDeltas++
+						} else if streamed.Type == "run.failed" {
+							t.Fatalf("run failed before final response: %s", streamed.Error)
+						}
+					}
+				}
+			}
+			final := strings.Join(deltas, "")
+			message := Message{Role: "assistant", Content: final}
+			result := post(t, server.URL+"/v1/runs/"+runID+"/responses", Response{RequestID: requestID, Message: &message}, testToken, runToken)
+			result.Body.Close()
+			if result.StatusCode != http.StatusNoContent {
+				t.Fatalf("final callback status=%d", result.StatusCode)
+			}
+		case "run.completed":
+			completed = true
+			if answer.String() != event.Final || event.Final != strings.Join(deltas, "") {
+				t.Fatalf("stream=%q final=%q", answer.String(), event.Final)
+			}
+		case "run.failed":
+			t.Fatalf("run failed: %s", event.Error)
+		}
+		if completed {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !completed || seenDeltas != len(deltas) || modelCalls != 2 {
+		t.Fatalf("completed=%v deltas=%d model calls=%d", completed, seenDeltas, modelCalls)
+	}
+}
+
+func scannerLine(t *testing.T, scanner *bufio.Scanner) (string, error) {
+	t.Helper()
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	return scanner.Text(), nil
 }
 func TestEmptyFinalAndCancellation(t *testing.T) {
 	for _, mode := range []string{"empty", "cancel"} {
@@ -309,5 +425,17 @@ func TestFinalAnswerDoesNotExposeProviderReasoningEnvelope(t *testing.T) {
 		if got := visibleFinalAnswer(c.raw); got != c.want {
 			t.Fatalf("got=%q want=%q", got, c.want)
 		}
+	}
+}
+
+func TestStreamFinalNormalizationPreservesAlreadyEmittedBody(t *testing.T) {
+	r := &activeRun{}
+	r.finalDeltas.WriteString("正文引用 </think>\n# 示例标题")
+	if got := r.normalizeFinal(" 正文引用 </think>\n# 示例标题 \n"); got != "正文引用 </think>\n# 示例标题" {
+		t.Fatalf("stream final erased visible body: %q", got)
+	}
+	legacy := &activeRun{}
+	if got := legacy.normalizeFinal("内部旧草稿</think>\n# 答案"); got != "# 答案" {
+		t.Fatalf("legacy cleanup changed: %q", got)
 	}
 }

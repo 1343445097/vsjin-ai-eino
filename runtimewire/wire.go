@@ -62,6 +62,7 @@ type Event struct {
 	Type      string           `json:"type"`
 	RunID     string           `json:"runId"`
 	Sequence  int              `json:"sequence"`
+	Features  []string         `json:"features,omitempty"`
 	RequestID string           `json:"requestId,omitempty"`
 	Messages  []Message        `json:"messages,omitempty"`
 	Tools     []Tool           `json:"tools,omitempty"`
@@ -74,6 +75,7 @@ type Response struct {
 	RequestID string   `json:"requestId"`
 	Message   *Message `json:"message,omitempty"`
 	Result    *string  `json:"result,omitempty"`
+	Delta     string   `json:"delta,omitempty"`
 	Error     string   `json:"error,omitempty"`
 }
 type pending struct {
@@ -81,13 +83,15 @@ type pending struct {
 	reply chan Response
 }
 type activeRun struct {
-	mu       sync.Mutex
-	token    string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	events   chan Event
-	pending  map[string]pending
-	sequence int
+	mu          sync.Mutex
+	deltaMu     sync.Mutex
+	token       string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	events      chan Event
+	pending     map[string]pending
+	sequence    int
+	finalDeltas strings.Builder
 }
 type Handler struct {
 	token string
@@ -144,8 +148,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	run.mu.Lock()
 	p, exists := run.pending[response.RequestID]
-	valid := exists && ((response.Error != "" && response.Message == nil && response.Result == nil) || (response.Error == "" && p.kind == "model.request" && response.Message != nil && response.Result == nil && response.Message.Role == "assistant") || (response.Error == "" && p.kind == "tool.request" && response.Result != nil && response.Message == nil))
-	if valid {
+	delta := response.Delta != ""
+	valid := exists && ((delta && response.Error == "" && p.kind == "model.request" && response.Message == nil && response.Result == nil) || (response.Error != "" && response.Message == nil && response.Result == nil && !delta) || (response.Error == "" && p.kind == "model.request" && response.Message != nil && response.Result == nil && response.Message.Role == "assistant" && !delta) || (response.Error == "" && p.kind == "tool.request" && response.Result != nil && response.Message == nil && !delta))
+	if valid && !delta {
 		delete(run.pending, response.RequestID)
 	}
 	run.mu.Unlock()
@@ -261,9 +266,39 @@ func (r *activeRun) emit(e Event) error {
 		return r.ctx.Err()
 	}
 }
+
+func (r *activeRun) emitFinalDelta(delta string) error {
+	if delta == "" {
+		return nil
+	}
+	if err := r.emit(Event{Type: "message.delta", Delta: delta}); err != nil {
+		return err
+	}
+	r.deltaMu.Lock()
+	r.finalDeltas.WriteString(delta)
+	r.deltaMu.Unlock()
+	return nil
+}
+
+func (r *activeRun) emitFinalResponse(final string) error {
+	r.deltaMu.Lock()
+	streamed := r.finalDeltas.String()
+	r.deltaMu.Unlock()
+	if streamed != "" {
+		if streamed != final {
+			return errors.New("model deltas do not match the final response")
+		}
+		return nil
+	}
+	return r.emit(Event{Type: "message.delta", Delta: final})
+}
 func (r *activeRun) request(ctx context.Context, e Event) (Response, error) {
+	return r.requestWithDeltas(ctx, e, nil)
+}
+
+func (r *activeRun) requestWithDeltas(ctx context.Context, e Event, onDelta func(string) error) (Response, error) {
 	e.RequestID = uuid.NewString()
-	ch := make(chan Response, 1)
+	ch := make(chan Response, 32)
 	r.mu.Lock()
 	r.pending[e.RequestID] = pending{kind: e.Type, reply: ch}
 	r.mu.Unlock()
@@ -271,19 +306,29 @@ func (r *activeRun) request(ctx context.Context, e Event) (Response, error) {
 	if err := r.emit(e); err != nil {
 		return Response{}, err
 	}
-	select {
-	case reply := <-ch:
-		if reply.Error != "" {
-			return Response{}, errors.New("caller could not complete " + e.Type)
+	for {
+		select {
+		case reply := <-ch:
+			if reply.Delta != "" {
+				if onDelta != nil {
+					if err := onDelta(reply.Delta); err != nil {
+						return Response{}, err
+					}
+				}
+				continue
+			}
+			if reply.Error != "" {
+				return Response{}, errors.New("caller could not complete " + e.Type)
+			}
+			return reply, nil
+		case <-ctx.Done():
+			return Response{}, ctx.Err()
 		}
-		return reply, nil
-	case <-ctx.Done():
-		return Response{}, ctx.Err()
 	}
 }
 func (r *activeRun) execute(req Request) {
 	defer close(r.events)
-	if r.emit(Event{Type: "run.started"}) != nil {
+	if r.emit(Event{Type: "run.started", Features: []string{"model.delta"}}) != nil {
 		return
 	}
 	tools := make([]tool.BaseTool, 0, len(req.Tools))
@@ -330,14 +375,16 @@ func (r *activeRun) execute(req Request) {
 		_ = r.emit(Event{Type: "run.failed", Error: "expert execution failed; check caller model or tool result"})
 		return
 	}
-	final = visibleFinalAnswer(final)
+	final = r.normalizeFinal(final)
 	if strings.TrimSpace(final) == "" {
 		_ = r.emit(Event{Type: "run.failed", Error: "model did not generate a final answer"})
 		return
 	}
-	if r.emit(Event{Type: "message.delta", Delta: final}) == nil {
-		_ = r.emit(Event{Type: "run.completed", Final: final})
+	if err := r.emitFinalResponse(final); err != nil {
+		_ = r.emit(Event{Type: "run.failed", Error: "model deltas do not match the final response"})
+		return
 	}
+	_ = r.emit(Event{Type: "run.completed", Final: final})
 }
 
 // Some providers put their scratchpad envelope in content rather than the
@@ -348,6 +395,33 @@ func visibleFinalAnswer(content string) string {
 	if end := strings.Index(trimmed, "</think>"); end >= 0 {
 		answer := strings.TrimSpace(trimmed[end+len("</think>"):])
 		if strings.HasPrefix(trimmed, "<think>") || strings.HasPrefix(answer, "#") {
+			return answer
+		}
+	}
+	return trimmed
+}
+
+// Streaming cannot retract text that was already shown. Only remove an
+// unambiguous leading envelope; keep literal markers inside the visible body.
+// Whole-response callers retain the legacy provider-cleanup heuristic.
+func (r *activeRun) normalizeFinal(content string) string {
+	r.deltaMu.Lock()
+	streamed := r.finalDeltas.Len() > 0
+	r.deltaMu.Unlock()
+	if !streamed {
+		return visibleFinalAnswer(content)
+	}
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "<think>") {
+		end := strings.Index(trimmed, "</think>")
+		if end < 0 {
+			return ""
+		}
+		return strings.TrimSpace(trimmed[end+len("</think>"):])
+	}
+	if strings.HasPrefix(trimmed, "</think>") {
+		answer := strings.TrimSpace(strings.TrimPrefix(trimmed, "</think>"))
+		if strings.HasPrefix(answer, "#") {
 			return answer
 		}
 	}
@@ -369,37 +443,98 @@ type remoteModel struct {
 }
 
 func (m *remoteModel) Generate(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	message, _, err := m.generate(ctx, input, func(delta string) error {
+		return m.run.emitFinalDelta(delta)
+	})
+	return message, err
+}
+
+func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onDelta func(string) error) (*schema.Message, bool, error) {
 	messages := make([]Message, 0, len(input))
 	for _, msg := range input {
 		messages = append(messages, fromEino(msg))
 	}
 	call := m.calls.Add(1)
 	if call > m.maxCalls {
-		return nil, errors.New("model round budget exhausted")
+		return nil, false, errors.New("model round budget exhausted")
 	}
 	tools := m.tools
-	finalRound := call == m.maxCalls
+	finalRound := call == m.maxCalls || len(tools) == 0
 	if finalRound {
 		tools = nil
 		messages = append(messages, Message{Role: "system", Content: "本轮是最终答复轮，不再调用工具。直接给出面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已经取得的证据和工具错误作答；检索片段仅是局部证据，不能由未命中推断全文没有相关要求。明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
 	}
-	reply, err := m.run.request(ctx, Event{Type: "model.request", Messages: messages, Tools: tools})
+	roundDelta := onDelta
+	if !finalRound {
+		roundDelta = nil
+	}
+	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: messages, Tools: tools}, roundDelta)
 	if err != nil {
-		return nil, err
+		return nil, finalRound, err
 	}
 	if finalRound && len(reply.Message.ToolCalls) > 0 {
-		return nil, errors.New("model requested tools during final answer round")
+		return nil, finalRound, errors.New("model requested tools during final answer round")
 	}
-	return toEino(*reply.Message), nil
+	if !finalRound && len(reply.Message.ToolCalls) == 0 {
+		return m.generateFinalAnswer(ctx, messages, reply.Message.Content, onDelta)
+	}
+	message := toEino(*reply.Message)
+	if finalRound {
+		message.Content = m.run.normalizeFinal(message.Content)
+	}
+	return message, finalRound, nil
+}
+
+func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Message, draft string, onDelta func(string) error) (*schema.Message, bool, error) {
+	call := m.calls.Add(1)
+	if call > m.maxCalls {
+		return nil, false, errors.New("model round budget exhausted before final answer")
+	}
+	finalMessages := append([]Message(nil), messages...)
+	if strings.TrimSpace(draft) != "" {
+		finalMessages = append(finalMessages, Message{Role: "assistant", Content: draft})
+	}
+	finalMessages = append(finalMessages, Message{Role: "system", Content: "本轮是最终答复轮，不再调用工具。将前一轮草稿整理为面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已取得的证据和工具错误作答；明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
+	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: finalMessages}, onDelta)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(reply.Message.ToolCalls) > 0 {
+		return nil, true, errors.New("model requested tools during final answer round")
+	}
+	message := toEino(*reply.Message)
+	message.Content = m.run.normalizeFinal(message.Content)
+	return message, true, nil
 }
 func (m *remoteModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	msg, err := m.Generate(ctx, input, opts...)
-	if err != nil {
-		return nil, err
-	}
-	r, w := schema.Pipe[*schema.Message](1)
-	w.Send(msg, nil)
-	w.Close()
+	r, w := schema.Pipe[*schema.Message](32)
+	go func() {
+		defer w.Close()
+		var streamed strings.Builder
+		msg, finalRound, err := m.generate(ctx, input, func(delta string) error {
+			if err := m.run.emitFinalDelta(delta); err != nil {
+				return err
+			}
+			streamed.WriteString(delta)
+			if w.Send(schema.AssistantMessage(delta, nil), nil) {
+				return context.Canceled
+			}
+			return nil
+		})
+		if err != nil {
+			w.Send(nil, err)
+			return
+		}
+		if finalRound && streamed.Len() > 0 {
+			if streamed.String() != msg.Content {
+				w.Send(nil, errors.New("model deltas do not match its final response"))
+			}
+			return
+		}
+		if w.Send(msg, nil) {
+			return
+		}
+	}()
 	return r, nil
 }
 
