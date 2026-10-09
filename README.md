@@ -64,3 +64,11 @@ make build
 只作为运行引擎启动时，设置 `VSJIN_AI_RUNTIME_ONLY=true` 和 `VSJIN_AI_API_TOKEN`，无需独立聊天模型凭据。此时工作台聊天接口返回503；协议接口必须携带服务令牌，回传/取消还必须持有本轮令牌。第一版协议支持文本及 Skill 工具；多模态输入明确拒绝，不静默丢图。流式协议目前在最终答复阶段发送正文，工具和模型请求实时发送。
 
 HRSS 适配并行开发中，配置为 `HRSS_EINO_LOOP_BASE_URL` 和 `HRSS_EINO_LOOP_API_TOKEN`。是否完成 HRSS 页面接入，以 HRSS 的本次验收报告为准，独立应用报告不能代替端到端业务验收。
+
+## 独立容器
+
+`docker build -t vsjin-einoloop:local .` 构建独立镜像；镜像只包含应用和许可证，构建上下文采用源码清单，排除本地会话、运行凭据、日志和 worktree。镜像以 UID/GID 10001 运行，数据目录为 `/data`。
+
+接入 HRSS 专家模式时使用 runtime-only：`VSJIN_AI_RUNTIME_ONLY=true`，并配置与 HRSS 匹配的 `VSJIN_AI_API_TOKEN`；此模式不需要模型 API 密钥或 HRSS 数据库连接。HRSS 负责实际模型调用和授权业务工具调用。
+
+本地 HRSS 使用 `deploy/docker-compose/docker-compose.einoloop.yaml` 覆盖层，在同一 Compose 网络运行 `vsjin-einoloop` 服务。后台可切换 Eino Loop 或 CLI Loop，两种服务可并行。具体启动及私密环境文件配置见 HRSS `docs/development/local-environments.md`。容器独立重启和更新，源码路径、镜像标签及回环端口由部署环境配置。

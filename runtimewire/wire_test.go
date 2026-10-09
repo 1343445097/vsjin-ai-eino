@@ -51,6 +51,7 @@ func TestRunModelToolAndFinalThroughRealHTTP(t *testing.T) {
 	scanner := bufio.NewScanner(response.Body)
 	var modelCalls, toolCalls, sequence int
 	completed := false
+	var answerDeltas strings.Builder
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -71,7 +72,7 @@ func TestRunModelToolAndFinalThroughRealHTTP(t *testing.T) {
 			if len(event.Tools) != 1 || event.Tools[0].Function.Name != "skills_read" {
 				t.Fatal("tool grant changed")
 			}
-			msg := Message{Role: "assistant", Content: "图纸给定标高为45.000m，不能据此免除其他区域要求。"}
+			msg := Message{Role: "assistant", Content: "<think>内部证据核对</think>图纸给定标高为45.000m，不能据此免除其他区域要求。"}
 			if modelCalls == 1 {
 				msg.Content = "先读取授权技能"
 				msg.ToolCalls = []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{"skill":"drawing-analysis"}`}}}
@@ -93,9 +94,14 @@ func TestRunModelToolAndFinalThroughRealHTTP(t *testing.T) {
 			}
 			result := "只读取授权图纸，工具后形成最终答复"
 			reply = Response{RequestID: event.RequestID, Result: &result}
+		case "message.delta":
+			answerDeltas.WriteString(event.Delta)
 		case "run.completed":
 			completed = true
-			if !strings.Contains(event.Final, "45.000") {
+			if answerDeltas.String() != event.Final {
+				t.Fatal("delta and final answer differ")
+			}
+			if !strings.Contains(event.Final, "45.000") || strings.Contains(event.Final, "think>") || strings.Contains(event.Final, "内部证据核对") {
 				t.Fatal("missing final")
 			}
 		case "run.failed":
@@ -289,5 +295,19 @@ func TestOneRoundBudgetOnlyAnswersAndRejectsToolCalls(t *testing.T) {
 				t.Fatalf("terminal=%s want=%s", terminal, want)
 			}
 		})
+	}
+}
+
+func TestFinalAnswerDoesNotExposeProviderReasoningEnvelope(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{"不要输出内部思考。</think>## 结论\n未取得正式工程依据。", "## 结论\n未取得正式工程依据。"},
+		{"<think>核对图纸证据</think>答案是 -2.500m。", "答案是 -2.500m。"},
+		{"日志原文包含 </think>，这是引用内容。", "日志原文包含 </think>，这是引用内容。"},
+		{"普通最终答复。", "普通最终答复。"},
+	}
+	for _, c := range cases {
+		if got := visibleFinalAnswer(c.raw); got != c.want {
+			t.Fatalf("got=%q want=%q", got, c.want)
+		}
 	}
 }

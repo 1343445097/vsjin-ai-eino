@@ -330,6 +330,7 @@ func (r *activeRun) execute(req Request) {
 		_ = r.emit(Event{Type: "run.failed", Error: "expert execution failed; check caller model or tool result"})
 		return
 	}
+	final = visibleFinalAnswer(final)
 	if strings.TrimSpace(final) == "" {
 		_ = r.emit(Event{Type: "run.failed", Error: "model did not generate a final answer"})
 		return
@@ -338,6 +339,21 @@ func (r *activeRun) execute(req Request) {
 		_ = r.emit(Event{Type: "run.completed", Final: final})
 	}
 }
+
+// Some providers put their scratchpad envelope in content rather than the
+// separate reasoning field. Strip only a leading envelope or an orphan closer
+// followed by a Markdown answer; preserve literal tags quoted in ordinary text.
+func visibleFinalAnswer(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if end := strings.Index(trimmed, "</think>"); end >= 0 {
+		answer := strings.TrimSpace(trimmed[end+len("</think>"):])
+		if strings.HasPrefix(trimmed, "<think>") || strings.HasPrefix(answer, "#") {
+			return answer
+		}
+	}
+	return trimmed
+}
+
 func toEino(m Message) *schema.Message {
 	return &schema.Message{Role: schema.RoleType(m.Role), Content: m.Content, Name: m.Name, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent}
 }
