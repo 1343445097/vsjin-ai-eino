@@ -1,0 +1,194 @@
+{
+  "upstreamCommit": "a6dbd95ab51fe9896a2bafa2e5a468e3bed01161",
+  "files": [
+    {
+      "path": "go.mod",
+      "sha256": "cbb4f512fa9f80830105e2b16ef8e5a7e02258c4e6827275f690b176d1c77bf4"
+    },
+    {
+      "path": "go.sum",
+      "sha256": "b32e1311c103ef4ff707171d4c2a77aba83aa50b44903996eacc771e7341ecba"
+    },
+    {
+      "path": "agent.go",
+      "sha256": "d4f5f9bbff6b2291df3fa899d286c0fe0ae9ac96d0ed625b2d826b60d44176ff"
+    },
+    {
+      "path": "main.go",
+      "sha256": "9507666f4c7d793a109815af8de793e34c9473948ca91b5af7a42b53a8661f87"
+    },
+    {
+      "path": "msgops/kind.go",
+      "sha256": "a83c46e08f4a63ecd54daeb58853fe55ee0e4300d158f571d8060d35e186ae33"
+    },
+    {
+      "path": "msgops/msgops_test.go",
+      "sha256": "354bd21aca388d93e98790fbf0274ec3b6931c8f77a25244e74abb87e074a05b"
+    },
+    {
+      "path": "msgops/normalize.go",
+      "sha256": "319ec0e4175042d62cd78868399ef315aec40d45ce62e4060b6a6c6b407703d9"
+    },
+    {
+      "path": "msgops/construct.go",
+      "sha256": "dc20041008a702443157c9bdd6b1b68f8bd501b97f26f62c95d11e8f2cc7c4b0"
+    },
+    {
+      "path": "msgops/variant.go",
+      "sha256": "459b5961e300e0c7abd5f5440ebf16cf65bc73d021e4696c7e001639fd0cf5d8"
+    },
+    {
+      "path": "msgops/extract.go",
+      "sha256": "64693117ff785a2827024823333b87df2fb79519481501608d009eddce2861e3"
+    },
+    {
+      "path": "chatmodel/model.go",
+      "sha256": "05d7ecc833568d6559bf8fd9e160f33d5b2c0ca06e5459d6fe2c4e7685079e6e"
+    },
+    {
+      "path": "server/server.go",
+      "sha256": "62219dc622bf3bfa139103ff49bfffde2465b676914953465f077252e7e61aef"
+    },
+    {
+      "path": "server/server_test.go",
+      "sha256": "2699e8431c40ec20552caaea50853a1fc6a0b8d0dfb2bc9223be5e6cb53c815a"
+    },
+    {
+      "path": "a2ui/streamer.go",
+      "sha256": "b18b8bbdd283aa93b8e86f6a7b57fd8b885afa66d9443e726db9767ca65b39db"
+    },
+    {
+      "path": "a2ui/types.go",
+      "sha256": "d332bb4f89a6c77e5990660df6cc47b9b788c6d23b5d90dab61db54a35a5e82c"
+    },
+    {
+      "path": "a2ui/streamer_test.go",
+      "sha256": "1edb24c03d9488b475f49624f073cb88c562eb39cec66a0507cd3462d9835580"
+    },
+    {
+      "path": "docs/ch11_turnloop.md",
+      "sha256": "b0af3fe9851e7becbd5be1ab49afa46c3895386ea707fafe3993314a328c7d08"
+    },
+    {
+      "path": "docs/ch06_callback.md",
+      "sha256": "4ed0472046ee1e6c1f48ce10893f5c689617e3bb2b2854c171e585dc6a883d15"
+    },
+    {
+      "path": "docs/ch02_chatmodel_agent_runner_console.md",
+      "sha256": "eb916d66d7ac7aa3947284a0b5f4d1322c41e98a3412d7306611e8ccc8a3c69e"
+    },
+    {
+      "path": "docs/ch10_a2ui.md",
+      "sha256": "518c103e6c2bafdf43673e7d3f6d88703bda1b625c003e4403ea6ed1a9fe955b"
+    },
+    {
+      "path": "docs/ch05_middleware.md",
+      "sha256": "0007c6674d116e864d5960d1dbfa9d2e3613135d159c5ee40df0c5b619209284"
+    },
+    {
+      "path": "docs/ch01_chatmodel_agent_console.md",
+      "sha256": "47920af7cbe9ca382fa7ecd813191691cd16d676ee8b7911f2f3ef71cc845c7a"
+    },
+    {
+      "path": "docs/ch07_interrupt_resume.md",
+      "sha256": "a94a43d4319064bc4bbcf06b1d004cc45bd788620b21d9802b774a6fb7ed7499"
+    },
+    {
+      "path": "docs/README.md",
+      "sha256": "fa1193fd1d8a9dd05ec0a2f1048c930cd329907f799567244f2efa0129636f5a"
+    },
+    {
+      "path": "docs/ch04_tool_backend_filesystem.md",
+      "sha256": "67b518195edbd6fd801cc495a7ff93ec7028eb4bbde316434fa467a054488e8c"
+    },
+    {
+      "path": "docs/ch09_skill.md",
+      "sha256": "ca28d8ae8a7703e1619ff2aacca31868a4ce8d610cf7a7053abda7b412340913"
+    },
+    {
+      "path": "docs/ch03_memory_session_jsonl.md",
+      "sha256": "d1c2960c7e40fc355aadd309f17e7dc7b271814944fe35b54db68b88285e04e5"
+    },
+    {
+      "path": "docs/ch08_graph_tool.md",
+      "sha256": "5fcb85784f72636f064094ab9ce0a37c83d3cf154aa89051351b4042e25a47aa"
+    },
+    {
+      "path": "rag/rag.go",
+      "sha256": "b7bbfc1f66bd26e8c398e8528e27e808f25d2a7e223210d9ff51a298333633c0"
+    },
+    {
+      "path": "static/index.html",
+      "sha256": "3b5837f5a12025e6b455107c1d47f577c17d6e47614a5a80d6a64dc96b91b23e"
+    },
+    {
+      "path": "scripts/sync_eino_ext_skills.go",
+      "sha256": "248a22b9012c5bce5b739c4505d939fd11482c69aebeebc7b4a61478ddb6e591"
+    },
+    {
+      "path": "smoketest/main.go",
+      "sha256": "c774f2d36bb5f9eb10b96cff296db1faf9064f7645c31d36e6650ec551950788"
+    },
+    {
+      "path": "helpers/eventloop.go",
+      "sha256": "06f817cce1c5ffd0b71fc5cc8f98c459389694d0fa9bd93f8a325965c36e68d7"
+    },
+    {
+      "path": "helpers/retry.go",
+      "sha256": "e8a06740dd7b0c771a675908fd040d3350807ae5d5b6133ff3a83fce1c13f99d"
+    },
+    {
+      "path": "helpers/middleware.go",
+      "sha256": "35aad8383807000c5084c13e7647cf087b3a0d0fa12d4432eb455d4f12c15f88"
+    },
+    {
+      "path": "mem/store.go",
+      "sha256": "cec291982e425ac01e18f8e06d4282483901903f6237396cb0a420a192b0e3de"
+    },
+    {
+      "path": "cmd/ch07/main.go",
+      "sha256": "944df83e8e14ae35de9df838b0160e1a15a4839db928b99710d2a1045978af8f"
+    },
+    {
+      "path": "cmd/ch09/main.go",
+      "sha256": "5c5049f6c82716e89fb9a0f49c44be699506f46fbad977ea180561ef28c13c98"
+    },
+    {
+      "path": "cmd/ch08/main.go",
+      "sha256": "9fbf5719573676fa2fb6225957b62b63f9610a2d60535b15ecec01b2280e7d91"
+    },
+    {
+      "path": "cmd/ch06/main.go",
+      "sha256": "f4dac74f36935dc9e24c060448e1b2d70df0bbf9b83d05343220e9ae32ee1c16"
+    },
+    {
+      "path": "cmd/ch01/main.go",
+      "sha256": "c0800759ed94684edd8fe4672d501c5c7961f390d35783ad71a6718c92164704"
+    },
+    {
+      "path": "cmd/ch04/main.go",
+      "sha256": "219a92fdce9762f286770d3036c6fda9ce470e65e8519594f81c870b380257ab"
+    },
+    {
+      "path": "cmd/ch03/main.go",
+      "sha256": "c575bb7be7e32090412ee46d2bd77667ac69db90c670555dffa4cab82266ff9c"
+    },
+    {
+      "path": "cmd/ch02/main.go",
+      "sha256": "5bd1f77b9ae28726f30ce164b60d0627709f65efcab4accd6701aec9b5425c7b"
+    },
+    {
+      "path": "cmd/ch05/main.go",
+      "sha256": "9d222d567a77780c96f9457ac600e99e71c2a03ac995771d46f426bdf07f6115"
+    },
+    {
+      "path": "cmd/ch10/main.go",
+      "sha256": "270ac54e45b1720bcc262643069f6466f6ae2f4169387fac7cffcf3df715a354"
+    }
+  ],
+  "excluded": [
+    "runtime data",
+    "workbench state",
+    "environment secrets"
+  ]
+}

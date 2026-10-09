@@ -1,0 +1,11 @@
+.worktrees/
+.env
+.env.*
+!.env.example
+data/
+.runtime/
+bin/
+node_modules/
+*.log
+.DS_Store
+docs/acceptance/**/assets/
