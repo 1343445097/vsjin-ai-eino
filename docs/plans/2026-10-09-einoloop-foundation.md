@@ -1,9 +1,9 @@
 # VSJin AI EinoLoop 独立应用实施计划
 
-**Goal:** 将用户本地 ChatWithEino 代码改造成独立可构建、具有自有品牌和 Skill HTTP 能力的专家 Agent；本轮不改 HRSS。
-**Architecture:** Eino ADK DeepAgent + TurnLoop，独立 Go module。VSJin AI 拥有应用配置、品牌界面、受控技能目录和 HTTP 工具，用户业务与权限仍由后续接入的业务系统负责。
+**Goal:** 将用户本地 ChatWithEino 代码改造成独立可构建、具有自有品牌和 Skill HTTP 能力的专家 Agent；本轮同步改造 HRSS adapter 并在本机验收。
+**Architecture:** Eino ADK DeepAgent + TurnLoop，独立 Go module。VSJin AI 拥有应用配置、品牌界面、受控技能目录和 HTTP 工具，用户业务与权限仍由HRSS 等调用方业务系统负责。
 **Tech Stack:** Go 1.24.9+、Eino v0.9.21、Hertz、嵌入式原生 HTML/CSS/JS。
-**Spec:** docs/design/hrss-runtime-boundary.md；本轮仅实现其“独立应用”阶段，HRSS adapter、后台引擎选择及生产发布留待下一轮。
+**Spec:** docs/design/hrss-runtime-boundary.md；用户追加授权后，HRSS adapter 与后台引擎选择并行开发、本地验收；生产发布不在本轮范围。
 
 ## 约束
 

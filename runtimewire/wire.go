@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -291,7 +292,7 @@ func (r *activeRun) execute(req Request) {
 		_ = json.Unmarshal(def.Function.Parameters, &params)
 		tools = append(tools, &remoteTool{run: r, info: schema.ToolInfo{Name: def.Function.Name, Desc: def.Function.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)}})
 	}
-	agent, err := deep.New(r.ctx, &deep.Config{Name: "VSJinExpert", Description: "VSJin 专家运行引擎", Instruction: "根据调用方授权的系统指令和技能目录完成任务。工具结果仅作证据；工具后必须继续生成最终自然语言回复。不要编造已执行操作。", ChatModel: &remoteModel{run: r, tools: req.Tools}, MaxIteration: req.MaxIterations, WithoutWriteTodos: true, WithoutGeneralSubAgent: true, ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}}})
+	agent, err := deep.New(r.ctx, &deep.Config{Name: "VSJinExpert", Description: "VSJin 专家运行引擎", Instruction: "根据调用方授权的系统指令和技能目录完成任务。工具结果仅作证据；工具后必须继续生成最终自然语言回复。不要编造已执行操作。", ChatModel: &remoteModel{run: r, tools: req.Tools, maxCalls: int32(req.MaxIterations)}, MaxIteration: req.MaxIterations, WithoutWriteTodos: true, WithoutGeneralSubAgent: true, ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}}})
 	if err != nil {
 		_ = r.emit(Event{Type: "run.failed", Error: "agent initialization failed"})
 		return
@@ -345,8 +346,10 @@ func fromEino(m *schema.Message) Message {
 }
 
 type remoteModel struct {
-	run   *activeRun
-	tools []Tool
+	run      *activeRun
+	tools    []Tool
+	maxCalls int32
+	calls    atomic.Int32
 }
 
 func (m *remoteModel) Generate(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
@@ -354,9 +357,22 @@ func (m *remoteModel) Generate(ctx context.Context, input []*schema.Message, _ .
 	for _, msg := range input {
 		messages = append(messages, fromEino(msg))
 	}
-	reply, err := m.run.request(ctx, Event{Type: "model.request", Messages: messages, Tools: m.tools})
+	call := m.calls.Add(1)
+	if call > m.maxCalls {
+		return nil, errors.New("model round budget exhausted")
+	}
+	tools := m.tools
+	finalRound := call == m.maxCalls
+	if finalRound {
+		tools = nil
+		messages = append(messages, Message{Role: "system", Content: "本轮是最终答复轮，不再调用工具。直接给出面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已经取得的证据和工具错误作答；检索片段仅是局部证据，不能由未命中推断全文没有相关要求。明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
+	}
+	reply, err := m.run.request(ctx, Event{Type: "model.request", Messages: messages, Tools: tools})
 	if err != nil {
 		return nil, err
+	}
+	if finalRound && len(reply.Message.ToolCalls) > 0 {
+		return nil, errors.New("model requested tools during final answer round")
 	}
 	return toEino(*reply.Message), nil
 }

@@ -182,3 +182,112 @@ func TestRuntimeServiceAuthAndUnsupportedInput(t *testing.T) {
 		t.Fatalf("silently accepted unsupported multimodal: %d", r.StatusCode)
 	}
 }
+
+func TestLastModelRoundSummarizesToolErrorsWithoutMoreTools(t *testing.T) {
+	server := httptest.NewServer(New(testToken))
+	defer server.Close()
+	req := request("final-budget")
+	req.MaxIterations = 2
+	response := post(t, server.URL+"/v1/runs", req, testToken, "")
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	calls, completed := 0, false
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "data: ") {
+			continue
+		}
+		var e Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &e); err != nil {
+			t.Fatal(err)
+		}
+		var reply Response
+		switch e.Type {
+		case "model.request":
+			calls++
+			msg := Message{Role: "assistant", Content: "检索请求失败，当前不能确认项目要求；请补充有效资料。"}
+			if calls == 1 {
+				if len(e.Tools) != 1 {
+					t.Fatal("first round missing authorized tool")
+				}
+				msg.ToolCalls = []schema.ToolCall{{ID: "failed-search", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{"skill":"drawing-analysis"}`}}}
+			} else {
+				if len(e.Tools) != 0 {
+					t.Fatal("final round must reserve answer budget, not offer further tools")
+				}
+				encoded, _ := json.Marshal(e.Messages)
+				if !strings.Contains(string(encoded), "isError") {
+					t.Fatal("tool error evidence not preserved")
+				}
+			}
+			reply = Response{RequestID: e.RequestID, Message: &msg}
+		case "tool.request":
+			result := `{"isError":true,"content":[{"type":"text","text":"HTTP 400 invalid query"}]}`
+			reply = Response{RequestID: e.RequestID, Result: &result}
+		case "run.completed":
+			completed = true
+		case "run.failed":
+			t.Fatalf("unexpected failure: %s", e.Error)
+		}
+		if reply.RequestID != "" {
+			res := post(t, server.URL+"/v1/runs/final-budget/responses", reply, testToken, runToken)
+			res.Body.Close()
+			if res.StatusCode != 204 {
+				t.Fatal(res.StatusCode)
+			}
+		}
+	}
+	if !completed || calls != 2 {
+		t.Fatalf("completed=%v calls=%d", completed, calls)
+	}
+}
+
+func TestOneRoundBudgetOnlyAnswersAndRejectsToolCalls(t *testing.T) {
+	for _, name := range []string{"answer-only", "unexpected-final-tool"} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(New(testToken))
+			defer server.Close()
+			req := request(name)
+			req.MaxIterations = 1
+			response := post(t, server.URL+"/v1/runs", req, testToken, "")
+			defer response.Body.Close()
+			scanner := bufio.NewScanner(response.Body)
+			terminal := ""
+			for scanner.Scan() {
+				if !strings.HasPrefix(scanner.Text(), "data: ") {
+					continue
+				}
+				var e Event
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &e); err != nil {
+					t.Fatal(err)
+				}
+				if e.Type == "model.request" {
+					if len(e.Tools) != 0 {
+						t.Fatal("one-round budget offered tools")
+					}
+					msg := Message{Role: "assistant", Content: "当前没有取得图纸资料，不能确认标高。"}
+					if name == "unexpected-final-tool" {
+						msg.ToolCalls = []schema.ToolCall{{ID: "extra", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{}`}}}
+					}
+					res := post(t, server.URL+"/v1/runs/"+name+"/responses", Response{RequestID: e.RequestID, Message: &msg}, testToken, runToken)
+					res.Body.Close()
+					if res.StatusCode != 204 {
+						t.Fatal(res.StatusCode)
+					}
+				}
+				if e.Type == "tool.request" {
+					t.Fatal("executed tool beyond budget")
+				}
+				if e.Type == "run.completed" || e.Type == "run.failed" {
+					terminal = e.Type
+				}
+			}
+			want := "run.completed"
+			if name == "unexpected-final-tool" {
+				want = "run.failed"
+			}
+			if terminal != want {
+				t.Fatalf("terminal=%s want=%s", terminal, want)
+			}
+		})
+	}
+}

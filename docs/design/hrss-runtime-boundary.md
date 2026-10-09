@@ -1,6 +1,6 @@
 # HRSS 与独立 EinoLoop 的解耦方案（分阶段实施）
 
-日期：2026-10-09。范围：独立应用阶段已获确认；HRSS 适配器与生产接入留待下一阶段。
+日期：2026-10-09。范围：独立应用与 HRSS 适配并行实现，用户已授权本地部署验收；生产接入不在本轮发布范围。
 
 ## 目标
 
@@ -106,4 +106,4 @@ DeepAgent 的文件系统、Shell、默认通用子 Agent 等原生能力采用�
 
 ## 状态
 
-用户确认先完成独立 VSJin AI 应用，再开始 HRSS 适配。本轮实际目录沿用上游可用结构（main.go、agent.go、server、skills、policy 等），不为目录形式额外重构；中立运行协议、动态权限、模型代理和 HRSS 适配验收尚未实施。独立应用的验证结果见 docs/acceptance。
+用户随后追加授权并行适配 HRSS。本轮目录沿用 main.go、agent.go、server、skills、policy，并增加中立 runtimewire 协议；HRSS 提供每轮已授权消息、工具定义及模型/工具响应，不把业务数据库或模型密钥交给独立引擎。独立应用的验证结果见 docs/acceptance；HRSS 页面与快速图片的端到端结果见 HRSS docs/acceptance/2026-10-09-einoloop-runtime-and-fast-images。
