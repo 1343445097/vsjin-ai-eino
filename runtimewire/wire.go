@@ -462,7 +462,7 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 	finalRound := call == m.maxCalls || len(tools) == 0
 	if finalRound {
 		tools = nil
-		messages = append(messages, Message{Role: "system", Content: "本轮是最终答复轮，不再调用工具。直接给出面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已经取得的证据和工具错误作答；检索片段仅是局部证据，不能由未命中推断全文没有相关要求。明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
+		messages = append(messages, Message{Role: "user", Content: "请现在给出之前问题的最终正式答复，不再调用工具。直接给出面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已经取得的证据和工具错误作答；检索片段仅是局部证据，不能由未命中推断全文没有相关要求。明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
 	}
 	roundDelta := onDelta
 	if !finalRound {
@@ -492,9 +492,9 @@ func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Messag
 	}
 	finalMessages := append([]Message(nil), messages...)
 	if strings.TrimSpace(draft) != "" {
-		finalMessages = append(finalMessages, Message{Role: "assistant", Content: draft})
+		finalMessages = append(finalMessages, Message{Role: "assistant", Content: visibleFinalAnswer(draft)})
 	}
-	finalMessages = append(finalMessages, Message{Role: "system", Content: "本轮是最终答复轮，不再调用工具。将前一轮草稿整理为面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已取得的证据和工具错误作答；明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
+	finalMessages = append(finalMessages, Message{Role: "user", Content: "请现在给出之前问题的最终正式答复，不再调用工具。将前一轮草稿整理为面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已取得的证据和工具错误作答；明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
 	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: finalMessages}, onDelta)
 	if err != nil {
 		return nil, true, err

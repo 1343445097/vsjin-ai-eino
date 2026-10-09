@@ -177,6 +177,9 @@ func TestRunForwardsModelDeltasBeforeFinalResponse(t *testing.T) {
 				}
 				continue
 			}
+			if len(event.Messages) == 0 || event.Messages[len(event.Messages)-1].Role != "user" {
+				t.Fatal("final answer request must end in a generation-triggering user message")
+			}
 			if modelCalls != 2 || len(event.Tools) != 0 {
 				t.Fatalf("answer round=%d tools=%d", modelCalls, len(event.Tools))
 			}
@@ -333,6 +336,9 @@ func TestLastModelRoundSummarizesToolErrorsWithoutMoreTools(t *testing.T) {
 				}
 				msg.ToolCalls = []schema.ToolCall{{ID: "failed-search", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{"skill":"drawing-analysis"}`}}}
 			} else {
+				if len(e.Messages) == 0 || e.Messages[len(e.Messages)-1].Role != "user" {
+					t.Fatal("budgeted final answer request must end in a user message")
+				}
 				if len(e.Tools) != 0 {
 					t.Fatal("final round must reserve answer budget, not offer further tools")
 				}
