@@ -72,3 +72,7 @@ HRSS 适配并行开发中，配置为 `HRSS_EINO_LOOP_BASE_URL` 和 `HRSS_EINO_
 接入 HRSS 专家模式时使用 runtime-only：`VSJIN_AI_RUNTIME_ONLY=true`，并配置与 HRSS 匹配的 `VSJIN_AI_API_TOKEN`；此模式不需要模型 API 密钥或 HRSS 数据库连接。HRSS 负责实际模型调用和授权业务工具调用。
 
 本地 HRSS 使用 `deploy/docker-compose/docker-compose.einoloop.yaml` 覆盖层，在同一 Compose 网络运行 `vsjin-einoloop` 服务。后台可切换 Eino Loop 或 CLI Loop，两种服务可并行。具体启动及私密环境文件配置见 HRSS `docs/development/local-environments.md`。容器独立重启和更新，源码路径、镜像标签及回环端口由部署环境配置。
+
+### 专家最终回复保持原问题
+
+运行协议的最终流式轮保留用户本轮原问题以及已授权的上下文、工具证据。工具决策轮的未发布文本不会作为已经发生的助手回复插入历史；最终生成不再追加“总结前序业务结果”的伪用户任务。问候和常识自然回答，业务证据与失败限制按实际问题应用；工具预算耗尽仍关闭工具，正文增量与最终结果保持一致。

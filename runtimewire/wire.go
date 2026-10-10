@@ -462,7 +462,7 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 	finalRound := call == m.maxCalls || len(tools) == 0
 	if finalRound {
 		tools = nil
-		messages = append(messages, Message{Role: "user", Content: "请现在给出之前问题的最终正式答复，不再调用工具。直接给出面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已经取得的证据和工具错误作答；检索片段仅是局部证据，不能由未命中推断全文没有相关要求。明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
+		messages = finalAnswerMessages(messages)
 	}
 	roundDelta := onDelta
 	if !finalRound {
@@ -476,7 +476,7 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 		return nil, finalRound, errors.New("model requested tools during final answer round")
 	}
 	if !finalRound && len(reply.Message.ToolCalls) == 0 {
-		return m.generateFinalAnswer(ctx, messages, reply.Message.Content, onDelta)
+		return m.generateFinalAnswer(ctx, messages, onDelta)
 	}
 	message := toEino(*reply.Message)
 	if finalRound {
@@ -485,16 +485,29 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 	return message, finalRound, nil
 }
 
-func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Message, draft string, onDelta func(string) error) (*schema.Message, bool, error) {
+// Keep the real user request as the generation trigger. A synthetic request to
+// summarize a previous draft changes greetings and ordinary questions into a
+// different task. Tool messages remain available; unpublished drafts do not
+// become fictional conversation history.
+func finalAnswerMessages(messages []Message) []Message {
+	result := append([]Message(nil), messages...)
+	instruction := "直接回答本轮用户原问题，不再调用工具，不输出内部思考、分析草稿或 think 标签。按问题需要选择自然的答复形式：问候、致谢直接简短回应；能力问题依据授权技能目录回答；常识和解释类问题直接解释，不强制套用业务报告格式。只有问题涉及实际业务查询时才根据已取得的证据作答并说明必要限制；未执行查询不能声称已查询，检索未命中不能推断全文没有相关要求，失败操作不能声称已完成。以下重复的用户消息仍是本轮原问题，不是新的总结任务。"
+	result = append(result, Message{Role: "system", Content: instruction})
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			result = append(result, messages[i])
+			return result
+		}
+	}
+	return result
+}
+
+func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Message, onDelta func(string) error) (*schema.Message, bool, error) {
 	call := m.calls.Add(1)
 	if call > m.maxCalls {
 		return nil, false, errors.New("model round budget exhausted before final answer")
 	}
-	finalMessages := append([]Message(nil), messages...)
-	if strings.TrimSpace(draft) != "" {
-		finalMessages = append(finalMessages, Message{Role: "assistant", Content: visibleFinalAnswer(draft)})
-	}
-	finalMessages = append(finalMessages, Message{Role: "user", Content: "请现在给出之前问题的最终正式答复，不再调用工具。将前一轮草稿整理为面向用户的结论、依据和限制，勿输出内部思考、分析草稿或 think 标签。根据已取得的证据和工具错误作答；明确资料不足或查询失败的限制，不能编造来源或声称失败操作已完成。"})
+	finalMessages := finalAnswerMessages(messages)
 	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: finalMessages}, onDelta)
 	if err != nil {
 		return nil, true, err
