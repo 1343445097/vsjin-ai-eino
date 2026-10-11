@@ -829,16 +829,68 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 // different task. Tool messages remain available; unpublished drafts do not
 // become fictional conversation history.
 func finalAnswerMessages(messages []Message) []Message {
-	result := append([]Message(nil), messages...)
 	instruction := "直接回答本轮用户原问题，不再调用工具，不输出内部思考、分析草稿或 think 标签。按问题需要选择自然的答复形式：问候、致谢直接简短回应；能力问题依据授权技能目录回答；常识和解释类问题直接解释，不强制套用业务报告格式。只有问题涉及实际业务查询时才根据已取得的证据作答并说明必要限制；未执行查询不能声称已查询，检索未命中不能推断全文没有相关要求，失败操作不能声称已完成。以下重复的用户消息仍是本轮原问题，不是新的总结任务。"
-	result = append(result, Message{Role: "system", Content: instruction})
+	var systemText []string
+	result := make([]Message, 0, len(messages)+1)
+	var originalUser *Message
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
-			result = append(result, messages[i])
-			return result
+			user := messages[i]
+			originalUser = &user
+			break
 		}
 	}
+	for _, message := range messages {
+		if message.Role == "system" {
+			if text := messageText(message); text != "" {
+				systemText = append(systemText, text)
+			}
+			continue
+		}
+		result = append(result, message)
+	}
+	systemText = append(systemText, instruction)
+	result = append([]Message{{Role: "system", Content: strings.Join(systemText, "\n\n")}}, result...)
+	if originalUser != nil {
+		question := *originalUser
+		hadImage := false
+		if len(question.ContentParts) > 0 {
+			textParts := make([]ContentPart, 0, len(question.ContentParts))
+			if question.Content != "" {
+				textParts = append(textParts, ContentPart{Type: "text", Text: question.Content})
+			}
+			for _, part := range question.ContentParts {
+				if part.Type == "text" {
+					textParts = append(textParts, part)
+				} else if part.Type == "image_url" {
+					hadImage = true
+				}
+			}
+			question.Content = ""
+			question.ContentParts = textParts
+		}
+		if hadImage && len(question.ContentParts) == 0 && strings.TrimSpace(question.Content) == "" {
+			question.Content = "请根据本轮原始图片回答用户的问题。"
+		}
+		result = append(result, question)
+	}
 	return result
+}
+
+func messageText(message Message) string {
+	if len(message.ContentParts) == 0 {
+		return message.Content
+	}
+	var content strings.Builder
+	if message.Content != "" {
+		content.WriteString(message.Content)
+	}
+	for _, part := range message.ContentParts {
+		if part.Type == "text" {
+			content.WriteString(part.Text)
+		}
+	}
+	return content.String()
 }
 
 func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Message, onDelta func(string) error) (*schema.Message, bool, error) {

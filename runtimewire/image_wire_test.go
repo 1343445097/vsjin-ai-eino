@@ -14,7 +14,11 @@ import (
 const tinyPNGDataURL = "data:image/png;base64,aGVsbG8="
 
 func rawRunBody(runID, content string) string {
-	return fmt.Sprintf(`{"version":"1","runId":%q,"runToken":%q,"messages":[{"role":"user","content":%s}],"tools":[{"type":"function","function":{"name":"skills_read","description":"read authorized skill","parameters":{"type":"object","properties":{}}}}],"maxIterations":2,"timeoutSeconds":5}`, runID, runToken, content)
+	return rawRunBodyWithMessages(runID, fmt.Sprintf(`[{"role":"user","content":%s}]`, content))
+}
+
+func rawRunBodyWithMessages(runID, messages string) string {
+	return fmt.Sprintf(`{"version":"1","runId":%q,"runToken":%q,"messages":%s,"tools":[{"type":"function","function":{"name":"skills_read","description":"read authorized skill","parameters":{"type":"object","properties":{}}}}],"maxIterations":2,"timeoutSeconds":5}`, runID, runToken, messages)
 }
 
 func rawPost(t *testing.T, url, body string) *http.Response {
@@ -36,7 +40,7 @@ func TestContentPartsRoundTripAndImageOnlyOriginalQuestionSurvivesToolRound(t *t
 	server := httptest.NewServer(New(testToken))
 	defer server.Close()
 
-	body := rawRunBody("image-round", `[{"type":"text","text":"请识别图中标高"},{"type":"image_url","image_url":{"url":"`+tinyPNGDataURL+`","detail":"high"}}]`)
+	body := rawRunBodyWithMessages("image-round", `[{"role":"system","content":"authorized system instruction"},{"role":"system","content":"authorized skill catalog"},{"role":"user","content":[{"type":"text","text":"请识别"},{"type":"image_url","image_url":{"url":"`+tinyPNGDataURL+`","detail":"high"}},{"type":"text","text":"图中标高"}]}]`)
 	response := rawPost(t, server.URL+"/v1/runs", body)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -77,10 +81,31 @@ func TestContentPartsRoundTripAndImageOnlyOriginalQuestionSurvivesToolRound(t *t
 				callback, _ := json.Marshal(map[string]any{"requestId": event.RequestID, "message": map[string]any{"role": "assistant", "content": "读取资料", "tool_calls": []any{call}}})
 				postCallback(t, server.URL, event.RunID, string(callback))
 			} else {
+				imageCount := 0
+				seenNonSystem := false
+				for _, message := range event.Messages {
+					if message.Role == "system" {
+						if seenNonSystem {
+							t.Fatalf("final request contains a non-leading system message: %#v", event.Messages)
+						}
+					} else {
+						seenNonSystem = true
+					}
+					for _, part := range message.ContentParts {
+						if part.Type == "image_url" {
+							imageCount++
+						}
+					}
+				}
+				if imageCount != 1 {
+					t.Fatalf("final request must retain exactly one authorized image, got %d", imageCount)
+				}
+				if len(event.Messages) < 3 || event.Messages[0].Role != "system" || !strings.Contains(event.Messages[0].Content, "authorized system instruction") || !strings.Contains(event.Messages[0].Content, "authorized skill catalog") || !strings.Contains(event.Messages[0].Content, "直接回答本轮用户原问题") {
+					t.Fatalf("final request did not coalesce system instructions at the front: %#v", event.Messages)
+				}
 				last := event.Messages[len(event.Messages)-1]
-				encodedLast, err := json.Marshal(last)
-				if err != nil || last.Role != "user" || !strings.HasPrefix(string(mustRawField(t, encodedLast, "content")), "[") {
-					t.Fatalf("final request lost original multimodal user turn: %#v", last)
+				if last.Role != "user" || len(last.ContentParts) != 2 || last.ContentParts[0].Type != "text" || last.ContentParts[0].Text != "请识别" || last.ContentParts[1].Type != "text" || last.ContentParts[1].Text != "图中标高" {
+					t.Fatalf("final request did not repeat every question text part without its image: %#v", last)
 				}
 				assertImageParts(t, event.Messages, "aGVsbG8=")
 				foundTool := false
@@ -136,14 +161,28 @@ func TestImageOnlyQuestionSurvivesFinalSelection(t *testing.T) {
 			modelCalls++
 			last := event.Messages[len(event.Messages)-1]
 			encoded, err := json.Marshal(last)
-			if err != nil || last.Role != "user" || !strings.HasPrefix(string(mustRawField(t, encoded, "content")), "[") {
+			if err != nil || last.Role != "user" {
 				t.Fatalf("image-only question did not trigger generation: %s", encoded)
 			}
-			var content []struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(mustRawField(t, encoded, "content"), &content); err != nil || len(content) != 1 || content[0].Type != "image_url" {
-				t.Fatalf("final generation lost image-only question: %s (%v)", encoded, err)
+			if modelCalls == 1 {
+				var content []struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal(mustRawField(t, encoded, "content"), &content); err != nil || len(content) != 1 || content[0].Type != "image_url" {
+					t.Fatalf("initial generation lost image-only question: %s (%v)", encoded, err)
+				}
+			} else {
+				imageCount := 0
+				for _, message := range event.Messages {
+					for _, part := range message.ContentParts {
+						if part.Type == "image_url" {
+							imageCount++
+						}
+					}
+				}
+				if imageCount != 1 || last.Content != "请根据本轮原始图片回答用户的问题。" || len(last.ContentParts) != 0 {
+					t.Fatalf("final generation duplicated or dropped image-only question: images=%d last=%#v", imageCount, last)
+				}
 			}
 			answer := "图片中没有可识别的标高文字。"
 			callback, _ := json.Marshal(map[string]any{"requestId": event.RequestID, "message": map[string]string{"role": "assistant", "content": answer}})
@@ -159,6 +198,14 @@ func TestImageOnlyQuestionSurvivesFinalSelection(t *testing.T) {
 	}
 	if !completed || modelCalls != 2 {
 		t.Fatalf("completed=%v model calls=%d", completed, modelCalls)
+	}
+}
+
+func TestFinalAnswerDoesNotInventImagePromptForEmptyTextOnlyTurn(t *testing.T) {
+	messages := finalAnswerMessages([]Message{{Role: "user"}})
+	last := messages[len(messages)-1]
+	if last.Role != "user" || last.Content != "" || len(last.ContentParts) != 0 {
+		t.Fatalf("empty text-only turn changed during final selection: %#v", last)
 	}
 }
 
@@ -273,7 +320,7 @@ func assertImageParts(t *testing.T, messages []Message, encoded string) {
 				} `json:"image_url"`
 			} `json:"content"`
 		}
-		if err := json.Unmarshal(encodedMessage, &wire); err != nil || len(wire.Content) != 2 || wire.Content[0].Type != "text" || wire.Content[0].Text != "请识别图中标高" || wire.Content[1].Type != "image_url" || !strings.HasSuffix(wire.Content[1].ImageURL.URL, ","+encoded) {
+		if err := json.Unmarshal(encodedMessage, &wire); err != nil || len(wire.Content) != 3 || wire.Content[0].Type != "text" || wire.Content[0].Text != "请识别" || wire.Content[1].Type != "image_url" || !strings.HasSuffix(wire.Content[1].ImageURL.URL, ","+encoded) || wire.Content[2].Type != "text" || wire.Content[2].Text != "图中标高" {
 			t.Fatalf("user image parts changed: %s (%v)", encodedMessage, err)
 		}
 		if wire.Content[1].ImageURL.Detail != "high" {
