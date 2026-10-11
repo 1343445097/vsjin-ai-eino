@@ -5,6 +5,7 @@ package runtimewire
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,18 +27,201 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxBytes = 4 << 20
+const (
+	maxWireBytes         = 24 << 20
+	maxTextBytes         = 4 << 20
+	maxEncodedImageBytes = 16 << 20
+	maxDecodedImageBytes = 8 << 20
+	maxImagesPerMessage  = 4
+)
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Message struct {
 	Role             string            `json:"role"`
-	Content          string            `json:"content,omitempty"`
+	Content          string            `json:"-"`
+	ContentParts     []ContentPart     `json:"-"`
 	Name             string            `json:"name,omitempty"`
 	ToolCalls        []schema.ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string            `json:"tool_call_id,omitempty"`
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
 }
+
+type ContentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *ImageURLPart `json:"image_url,omitempty"`
+}
+
+type ImageURLPart struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	type wireMessage struct {
+		Role             string            `json:"role"`
+		Content          any               `json:"content,omitempty"`
+		Name             string            `json:"name,omitempty"`
+		ToolCalls        []schema.ToolCall `json:"tool_calls,omitempty"`
+		ToolCallID       string            `json:"tool_call_id,omitempty"`
+		ReasoningContent string            `json:"reasoning_content,omitempty"`
+	}
+	var content any
+	if len(m.ContentParts) > 0 {
+		content = m.ContentParts
+	} else if m.Content != "" {
+		content = m.Content
+	}
+	return json.Marshal(wireMessage{Role: m.Role, Content: content, Name: m.Name, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent})
+}
+
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type wireMessage struct {
+		Role             string            `json:"role"`
+		Content          json.RawMessage   `json:"content"`
+		Name             string            `json:"name,omitempty"`
+		ToolCalls        []schema.ToolCall `json:"tool_calls,omitempty"`
+		ToolCallID       string            `json:"tool_call_id,omitempty"`
+		ReasoningContent string            `json:"reasoning_content,omitempty"`
+	}
+	var wire wireMessage
+	if err := decodeStrict(data, &wire); err != nil {
+		return errors.New("invalid message")
+	}
+	*m = Message{Role: wire.Role, Name: wire.Name, ToolCalls: wire.ToolCalls, ToolCallID: wire.ToolCallID, ReasoningContent: wire.ReasoningContent}
+	if len(wire.Content) == 0 || string(wire.Content) == "null" {
+		return nil
+	}
+	if wire.Content[0] == '"' {
+		if err := json.Unmarshal(wire.Content, &m.Content); err != nil {
+			return errors.New("invalid message content")
+		}
+		return nil
+	}
+	if wire.Content[0] != '[' {
+		return errors.New("invalid message content")
+	}
+	var rawParts []json.RawMessage
+	if err := json.Unmarshal(wire.Content, &rawParts); err != nil || len(rawParts) == 0 {
+		return errors.New("invalid message content parts")
+	}
+	m.ContentParts = make([]ContentPart, 0, len(rawParts))
+	for _, raw := range rawParts {
+		var header struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &header); err != nil {
+			return errors.New("invalid message content part")
+		}
+		switch header.Type {
+		case "text":
+			var part struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if err := decodeStrict(raw, &part); err != nil || part.Text == "" {
+				return errors.New("invalid text content part")
+			}
+			m.ContentParts = append(m.ContentParts, ContentPart{Type: "text", Text: part.Text})
+		case "image_url":
+			var part struct {
+				Type     string        `json:"type"`
+				ImageURL *ImageURLPart `json:"image_url"`
+			}
+			if err := decodeStrict(raw, &part); err != nil || part.ImageURL == nil {
+				return errors.New("invalid image content part")
+			}
+			if _, _, err := decodeImageDataURL(part.ImageURL.URL); err != nil || (part.ImageURL.Detail != "" && part.ImageURL.Detail != "auto" && part.ImageURL.Detail != "low" && part.ImageURL.Detail != "high") {
+				return errors.New("invalid image content part")
+			}
+			m.ContentParts = append(m.ContentParts, ContentPart{Type: "image_url", ImageURL: part.ImageURL})
+		default:
+			return errors.New("unsupported message content part")
+		}
+	}
+	return validateMessageParts(*m)
+}
+
+func decodeStrict(data []byte, out any) error {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return errors.New("trailing content")
+	}
+	return nil
+}
+
+func validateMessageParts(m Message) error {
+	images := 0
+	for _, part := range m.ContentParts {
+		if part.Type == "image_url" {
+			images++
+		}
+	}
+	if images > maxImagesPerMessage {
+		return errors.New("too many images in message")
+	}
+	return nil
+}
+
+func messageHasImages(m Message) bool {
+	for _, part := range m.ContentParts {
+		if part.Type == "image_url" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateRequestContent(messages []Message) error {
+	var textBytes, encodedImageBytes int
+	for _, message := range messages {
+		textBytes += len(message.Content)
+		for _, part := range message.ContentParts {
+			if part.Type == "text" {
+				textBytes += len(part.Text)
+				continue
+			}
+			if part.Type != "image_url" || part.ImageURL == nil {
+				return errors.New("invalid message content")
+			}
+			_, _, err := decodeImageDataURL(part.ImageURL.URL)
+			if err != nil {
+				return err
+			}
+			_, encoded, _ := strings.Cut(part.ImageURL.URL, ",")
+			encodedImageBytes += len(encoded)
+		}
+	}
+	if textBytes > maxTextBytes || encodedImageBytes > maxEncodedImageBytes {
+		return errors.New("run content exceeds protocol budget")
+	}
+	return nil
+}
+
+func decodeImageDataURL(value string) (string, []byte, error) {
+	prefix, encoded, ok := strings.Cut(value, ",")
+	if !ok || !strings.HasSuffix(prefix, ";base64") {
+		return "", nil, errors.New("invalid image data URL")
+	}
+	mimeType := strings.TrimPrefix(strings.TrimSuffix(prefix, ";base64"), "data:")
+	if mimeType != "image/png" && mimeType != "image/jpeg" && mimeType != "image/webp" {
+		return "", nil, errors.New("unsupported image type")
+	}
+	if encoded == "" || strings.ContainsAny(encoded, " \t\r\n") {
+		return "", nil, errors.New("invalid image base64")
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(decoded) > maxDecodedImageBytes || base64.StdEncoding.EncodeToString(decoded) != encoded {
+		return "", nil, errors.New("invalid image base64")
+	}
+	return mimeType, decoded, nil
+}
+
 type Tool struct {
 	Type     string   `json:"type"`
 	Function Function `json:"function"`
@@ -48,14 +232,15 @@ type Function struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 type Request struct {
-	Version        string    `json:"version"`
-	RunID          string    `json:"runId"`
-	RunToken       string    `json:"runToken"`
-	Messages       []Message `json:"messages"`
-	Tools          []Tool    `json:"tools"`
-	MaxIterations  int       `json:"maxIterations"`
-	TimeoutSeconds int       `json:"timeoutSeconds"`
-	Temperature    float64   `json:"temperature"`
+	Version          string            `json:"version"`
+	RunID            string            `json:"runId"`
+	RunToken         string            `json:"runToken"`
+	Messages         []Message         `json:"messages"`
+	Tools            []Tool            `json:"tools"`
+	InitialToolCalls []schema.ToolCall `json:"initialToolCalls,omitempty"`
+	MaxIterations    int               `json:"maxIterations"`
+	TimeoutSeconds   int               `json:"timeoutSeconds"`
+	Temperature      float64           `json:"temperature"`
 }
 type Event struct {
 	Version   string           `json:"version"`
@@ -142,14 +327,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var response Response
-	if decode(w, r, &response) != nil {
+	if decodeLimit(w, r, &response, maxTextBytes) != nil {
 		http.Error(w, "invalid response", 400)
 		return
 	}
 	run.mu.Lock()
 	p, exists := run.pending[response.RequestID]
 	delta := response.Delta != ""
-	valid := exists && ((delta && response.Error == "" && p.kind == "model.request" && response.Message == nil && response.Result == nil) || (response.Error != "" && response.Message == nil && response.Result == nil && !delta) || (response.Error == "" && p.kind == "model.request" && response.Message != nil && response.Result == nil && response.Message.Role == "assistant" && !delta) || (response.Error == "" && p.kind == "tool.request" && response.Result != nil && response.Message == nil && !delta))
+	valid := exists && ((delta && response.Error == "" && p.kind == "model.request" && response.Message == nil && response.Result == nil) || (response.Error != "" && response.Message == nil && response.Result == nil && !delta) || (response.Error == "" && p.kind == "model.request" && response.Message != nil && response.Result == nil && response.Message.Role == "assistant" && !messageHasImages(*response.Message) && !delta) || (response.Error == "" && p.kind == "tool.request" && response.Result != nil && response.Message == nil && !delta))
 	if valid && !delta {
 		delete(run.pending, response.RequestID)
 	}
@@ -162,7 +347,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 func decode(w http.ResponseWriter, r *http.Request, out any) error {
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
+	return decodeLimit(w, r, out, maxWireBytes)
+}
+
+func decodeLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) error {
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return err
@@ -172,6 +361,67 @@ func decode(w http.ResponseWriter, r *http.Request, out any) error {
 	}
 	return nil
 }
+
+func validInitialToolCalls(calls []schema.ToolCall, declared map[string]bool, existingIDs map[string]bool) bool {
+	if len(calls) > 2 {
+		return false
+	}
+	ids := make(map[string]bool, len(existingIDs)+len(calls))
+	for id := range existingIDs {
+		ids[id] = true
+	}
+	for _, call := range calls {
+		if call.Type != "function" || len(call.Extra) > 0 || !identifier.MatchString(call.ID) || ids[call.ID] || !declared[call.Function.Name] || len(call.Function.Arguments) == 0 || len(call.Function.Arguments) > maxTextBytes {
+			return false
+		}
+		var args any
+		decoder := json.NewDecoder(strings.NewReader(call.Function.Arguments))
+		decoder.UseNumber()
+		if decoder.Decode(&args) != nil || decoder.Decode(new(any)) != io.EOF {
+			return false
+		}
+		object, ok := args.(map[string]any)
+		if !ok || hasUnsafeBootstrapArgument(object) {
+			return false
+		}
+		ids[call.ID] = true
+	}
+	return true
+}
+
+func hasUnsafeBootstrapArgument(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key))
+			if strings.Contains(normalized, "image") || isRawIdentityField(normalized) || hasUnsafeBootstrapArgument(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if hasUnsafeBootstrapArgument(child) {
+				return true
+			}
+		}
+	case string:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(typed)), "data:image/")
+	}
+	return false
+}
+
+func isRawIdentityField(key string) bool {
+	if strings.Contains(key, "identity") {
+		return true
+	}
+	switch key {
+	case "user", "userid", "userids", "username", "useremail", "userphone", "tenant", "tenantid", "tenantids", "department", "departmentid", "departmentids", "dept", "deptid", "employee", "employeeid", "employeeids", "organization", "organizationid", "org", "orgid", "principal", "principalid", "account", "accountid", "email", "phone":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	var req Request
 	if err := decode(w, r, &req); err != nil || req.Version != "1" || !identifier.MatchString(req.RunID) || len(req.RunToken) < 24 || len(req.Messages) == 0 || len(req.Messages) > 256 || len(req.Tools) > 64 || req.MaxIterations < 1 || req.MaxIterations > 50 || req.TimeoutSeconds < 1 || req.TimeoutSeconds > 1800 {
@@ -183,8 +433,17 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid message role", 400)
 			return
 		}
+		if messageHasImages(m) && m.Role != "user" {
+			http.Error(w, "images are only allowed in user messages", 400)
+			return
+		}
+	}
+	if validateRequestContent(req.Messages) != nil {
+		http.Error(w, "invalid run request", 400)
+		return
 	}
 	seen := map[string]bool{}
+	toolNames := map[string]bool{}
 	for _, t := range req.Tools {
 		var params jsonschema.Schema
 		if t.Type != "function" || t.Function.Name == "" || seen[t.Function.Name] || json.Unmarshal(t.Function.Parameters, &params) != nil || params.Type != "object" {
@@ -192,6 +451,20 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seen[t.Function.Name] = true
+		toolNames[t.Function.Name] = true
+	}
+	usedIDs := map[string]bool{}
+	for _, message := range req.Messages {
+		if message.ToolCallID != "" {
+			usedIDs[message.ToolCallID] = true
+		}
+		for _, call := range message.ToolCalls {
+			usedIDs[call.ID] = true
+		}
+	}
+	if !validInitialToolCalls(req.InitialToolCalls, toolNames, usedIDs) {
+		http.Error(w, "invalid initial tool calls", 400)
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(req.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -256,7 +529,7 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 }
 func (r *activeRun) emit(e Event) error {
 	encoded, err := json.Marshal(e)
-	if err != nil || len(encoded) > maxBytes-1024 {
+	if err != nil || len(encoded) > maxWireBytes-1024 {
 		return errors.New("run event exceeds protocol budget")
 	}
 	select {
@@ -328,7 +601,7 @@ func (r *activeRun) requestWithDeltas(ctx context.Context, e Event, onDelta func
 }
 func (r *activeRun) execute(req Request) {
 	defer close(r.events)
-	if r.emit(Event{Type: "run.started", Features: []string{"model.delta"}}) != nil {
+	if r.emit(Event{Type: "run.started", Features: []string{"model.delta", "message.images", "tool.bootstrap"}}) != nil {
 		return
 	}
 	tools := make([]tool.BaseTool, 0, len(req.Tools))
@@ -345,6 +618,18 @@ func (r *activeRun) execute(req Request) {
 	messages := make([]*schema.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		messages = append(messages, toEino(m))
+	}
+	if len(req.InitialToolCalls) > 0 {
+		calls := append([]schema.ToolCall(nil), req.InitialToolCalls...)
+		messages = append(messages, &schema.Message{Role: schema.Assistant, ToolCalls: calls})
+		for _, call := range calls {
+			result := `{"isError":true,"error":"bootstrap tool failed"}`
+			reply, callErr := r.request(r.ctx, Event{Type: "tool.request", Call: &call})
+			if callErr == nil && reply.Result != nil {
+				result = *reply.Result
+			}
+			messages = append(messages, schema.ToolMessage(result, call.ID, schema.WithToolName(call.Function.Name)))
+		}
 	}
 	events := agent.Run(r.ctx, &adk.AgentInput{Messages: messages})
 	final := ""
@@ -429,10 +714,60 @@ func (r *activeRun) normalizeFinal(content string) string {
 }
 
 func toEino(m Message) *schema.Message {
-	return &schema.Message{Role: schema.RoleType(m.Role), Content: m.Content, Name: m.Name, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent}
+	message := &schema.Message{Role: schema.RoleType(m.Role), Content: m.Content, Name: m.Name, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent}
+	if m.Role == "user" && len(m.ContentParts) > 0 {
+		message.UserInputMultiContent = make([]schema.MessageInputPart, 0, len(m.ContentParts))
+		for _, part := range m.ContentParts {
+			switch part.Type {
+			case "text":
+				message.UserInputMultiContent = append(message.UserInputMultiContent, schema.MessageInputPart{Type: schema.ChatMessagePartTypeText, Text: part.Text})
+			case "image_url":
+				mimeType, data, _ := decodeImageDataURL(part.ImageURL.URL)
+				encoded := base64.StdEncoding.EncodeToString(data)
+				message.UserInputMultiContent = append(message.UserInputMultiContent, schema.MessageInputPart{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{Base64Data: &encoded, MIMEType: mimeType}, Detail: schema.ImageURLDetail(part.ImageURL.Detail)}})
+			}
+		}
+	} else if len(m.ContentParts) > 0 {
+		var content strings.Builder
+		for _, part := range m.ContentParts {
+			if part.Type == "text" {
+				content.WriteString(part.Text)
+			}
+		}
+		message.Content = content.String()
+	}
+	return message
 }
-func fromEino(m *schema.Message) Message {
-	return Message{Role: string(m.Role), Content: m.Content, Name: m.Name, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent}
+func fromEino(m *schema.Message) (Message, error) {
+	if len(m.AssistantGenMultiContent) > 0 {
+		return Message{}, errors.New("assistant multimodal output is unsupported")
+	}
+	message := Message{Role: string(m.Role), Content: m.Content, Name: m.Name, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent}
+	for _, part := range m.UserInputMultiContent {
+		switch part.Type {
+		case schema.ChatMessagePartTypeText:
+			message.ContentParts = append(message.ContentParts, ContentPart{Type: "text", Text: part.Text})
+		case schema.ChatMessagePartTypeImageURL:
+			if part.Image == nil || part.Image.Base64Data == nil {
+				return Message{}, errors.New("model input image is not inline data")
+			}
+			mimeType := part.Image.MIMEType
+			if mimeType != "image/png" && mimeType != "image/jpeg" && mimeType != "image/webp" {
+				return Message{}, errors.New("model input image type is unsupported")
+			}
+			dataURL := "data:" + mimeType + ";base64," + *part.Image.Base64Data
+			if _, _, err := decodeImageDataURL(dataURL); err != nil {
+				return Message{}, errors.New("model input image is invalid")
+			}
+			message.ContentParts = append(message.ContentParts, ContentPart{Type: "image_url", ImageURL: &ImageURLPart{URL: dataURL, Detail: string(part.Image.Detail)}})
+		default:
+			return Message{}, errors.New("model input contains unsupported content")
+		}
+	}
+	if err := validateMessageParts(message); err != nil {
+		return Message{}, err
+	}
+	return message, nil
 }
 
 type remoteModel struct {
@@ -452,7 +787,11 @@ func (m *remoteModel) Generate(ctx context.Context, input []*schema.Message, _ .
 func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onDelta func(string) error) (*schema.Message, bool, error) {
 	messages := make([]Message, 0, len(input))
 	for _, msg := range input {
-		messages = append(messages, fromEino(msg))
+		converted, err := fromEino(msg)
+		if err != nil {
+			return nil, false, err
+		}
+		messages = append(messages, converted)
 	}
 	call := m.calls.Add(1)
 	if call > m.maxCalls {
