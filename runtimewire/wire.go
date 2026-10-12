@@ -33,7 +33,10 @@ const (
 	maxEncodedImageBytes = 16 << 20
 	maxDecodedImageBytes = 8 << 20
 	maxImagesPerMessage  = 4
+	finalSummaryMaxBytes = 12 << 10
 )
+
+var errFinalProtocolDetected = errors.New("model returned a tool protocol instead of a final answer")
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
@@ -807,7 +810,13 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 	if !finalRound {
 		roundDelta = nil
 	}
-	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: messages, Tools: tools}, roundDelta)
+	var reply Response
+	var err error
+	if finalRound {
+		reply, err = m.requestFinalAnswer(ctx, messages, onDelta)
+	} else {
+		reply, err = m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: messages, Tools: tools}, roundDelta)
+	}
 	if err != nil {
 		return nil, finalRound, err
 	}
@@ -829,7 +838,7 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 // different task. Tool messages remain available; unpublished drafts do not
 // become fictional conversation history.
 func finalAnswerMessages(messages []Message) []Message {
-	instruction := "直接回答本轮用户原问题，不再调用工具，不输出内部思考、分析草稿或 think 标签。按问题需要选择自然的答复形式：问候、致谢直接简短回应；能力问题依据授权技能目录回答；常识和解释类问题直接解释，不强制套用业务报告格式。只有问题涉及实际业务查询时才根据已取得的证据作答并说明必要限制；未执行查询不能声称已查询，检索未命中不能推断全文没有相关要求，失败操作不能声称已完成。以下重复的用户消息仍是本轮原问题，不是新的总结任务。"
+	instruction := "直接回答本轮用户原问题，仅用中文；本轮工具已关闭，不要输出工具协议、调用计划或内部思考。按问题需要选择自然的答复形式：问候、致谢直接简短回应；能力问题依据授权技能目录回答；常识和解释类问题直接解释，不强制套用业务报告格式。只有问题涉及实际业务查询时才根据已取得的证据作答并说明必要限制；未执行查询不能声称已查询，检索未命中不能推断全文没有相关要求，失败操作不能声称已完成。以下重复的用户消息仍是本轮原问题，不是新的总结任务。"
 	var systemText []string
 	result := make([]Message, 0, len(messages)+1)
 	var originalUser *Message
@@ -899,7 +908,7 @@ func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Messag
 		return nil, false, errors.New("model round budget exhausted before final answer")
 	}
 	finalMessages := finalAnswerMessages(messages)
-	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: finalMessages}, onDelta)
+	reply, err := m.requestFinalAnswer(ctx, finalMessages, onDelta)
 	if err != nil {
 		return nil, true, err
 	}
@@ -909,6 +918,200 @@ func (m *remoteModel) generateFinalAnswer(ctx context.Context, messages []Messag
 	message := toEino(*reply.Message)
 	message.Content = m.run.normalizeFinal(message.Content)
 	return message, true, nil
+}
+
+func (m *remoteModel) requestFinalAnswer(ctx context.Context, messages []Message, onDelta func(string) error) (Response, error) {
+	gate := &finalDeltaGate{forward: onDelta}
+	reply, err := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: messages}, gate.accept)
+	protocol := gate.protocol || errors.Is(err, errFinalProtocolDetected) || err == nil && reply.Message != nil && containsDSMLToolCall(reply.Message.Content)
+	if !protocol {
+		if err == nil {
+			if flushErr := gate.flush(); flushErr != nil {
+				return Response{}, flushErr
+			}
+		}
+		return reply, err
+	}
+	if gate.emitted {
+		return Response{}, errFinalProtocolDetected
+	}
+	retryMessages := summaryOnlyFinalMessages(messages)
+	retry, retryErr := m.run.requestWithDeltas(ctx, Event{Type: "model.request", Messages: retryMessages}, nil)
+	if retryErr != nil {
+		return Response{}, retryErr
+	}
+	if retry.Message == nil || containsDSMLToolCall(retry.Message.Content) || len(retry.Message.ToolCalls) > 0 {
+		return Response{}, errFinalProtocolDetected
+	}
+	return retry, nil
+}
+
+type finalDeltaGate struct {
+	forward  func(string) error
+	probe    strings.Builder
+	emitted  bool
+	protocol bool
+}
+
+func (g *finalDeltaGate) accept(delta string) error {
+	if g.protocol {
+		return nil
+	}
+	g.probe.WriteString(delta)
+	if containsDSMLToolCall(g.probe.String()) {
+		g.protocol = true
+		return nil
+	}
+	value := g.probe.String()
+	lower := strings.ToLower(value)
+	markers := []string{"<｜dsml｜", "<|dsml|", "dsml"}
+	markerAt := -1
+	for _, marker := range markers {
+		if at := strings.Index(lower, marker); at >= 0 && (markerAt < 0 || at < markerAt) {
+			markerAt = at
+		}
+	}
+	if markerAt >= 0 {
+		if markerAt > 0 {
+			if err := g.send(value[:markerAt]); err != nil {
+				return err
+			}
+			value = value[markerAt:]
+		}
+		if len(value) <= 512 {
+			g.probe.Reset()
+			g.probe.WriteString(value)
+			return nil
+		}
+	}
+	hold := possibleDSMLPrefixSuffix(value)
+	safe := value[:len(value)-hold]
+	if err := g.send(safe); err != nil {
+		return err
+	}
+	g.probe.Reset()
+	g.probe.WriteString(value[len(value)-hold:])
+	return nil
+}
+
+func (g *finalDeltaGate) send(value string) error {
+	if value == "" {
+		return nil
+	}
+	if g.forward != nil {
+		if err := g.forward(value); err != nil {
+			return err
+		}
+	}
+	g.emitted = true
+	return nil
+}
+
+func possibleDSMLPrefixSuffix(value string) int {
+	lower := strings.ToLower(value)
+	max := 0
+	for _, marker := range []string{"<｜dsml｜", "<|dsml|", "dsml"} {
+		limit := len(marker) - 1
+		if len(lower) < limit {
+			limit = len(lower)
+		}
+		for size := 1; size <= limit; size++ {
+			if strings.HasSuffix(lower, marker[:size]) && size > max {
+				max = size
+			}
+		}
+	}
+	return max
+}
+
+func (g *finalDeltaGate) flush() error {
+	if g.protocol || g.probe.Len() == 0 {
+		return nil
+	}
+	if err := g.send(g.probe.String()); err != nil {
+		return err
+	}
+	g.probe.Reset()
+	return nil
+}
+
+func containsDSMLToolCall(content string) bool {
+	lower := strings.ToLower(content)
+	marker := strings.Contains(lower, "<｜dsml｜") || strings.Contains(lower, "<|dsml|") || strings.Contains(lower, "dsml")
+	return marker && strings.Contains(lower, "invoke") && strings.Contains(lower, "skill_http_request")
+}
+
+func summaryOnlyFinalMessages(messages []Message) []Message {
+	var systems []Message
+	var originalUser *Message
+	var summaries []string
+	for _, message := range messages {
+		switch message.Role {
+		case "system":
+			if text := messageText(message); text != "" {
+				systems = append(systems, Message{Role: "system", Content: text})
+			}
+		case "user":
+			copy := message
+			originalUser = &copy
+		case "tool":
+			if summary := toolResultSummary(message.Content); summary != "" {
+				summaries = append(summaries, summary)
+			}
+		}
+	}
+	instruction := "本轮最终答复纠正：所有工具均已关闭。只用中文回答原问题，不输出工具协议、调用计划或内部思考。仅根据原问题、授权系统指令和下列工具 Summary 作答；证据不足或无法确认已完整读取时，明确说明不足，不得声称完成。"
+	if len(systems) == 0 {
+		systems = append(systems, Message{Role: "system", Content: instruction})
+	} else {
+		systems[0].Content += "\n\n" + instruction
+	}
+	out := append([]Message(nil), systems...)
+	if originalUser != nil {
+		out = append(out, *originalUser)
+	}
+	summary := strings.Join(summaries, "\n")
+	if summary == "" {
+		summary = "没有可用的工具 Summary；若原问题无法由现有信息回答，必须说明证据不足。"
+	}
+	if len(summary) > finalSummaryMaxBytes {
+		summary = summary[:finalSummaryMaxBytes]
+		for !json.Valid([]byte(fmt.Sprintf("%q", summary))) {
+			summary = summary[:len(summary)-1]
+		}
+	}
+	out = append(out, Message{Role: "user", Content: "已取得的工具摘要：\n" + summary})
+	return out
+}
+
+func toolResultSummary(content string) string {
+	var root any
+	if json.Unmarshal([]byte(content), &root) != nil {
+		return ""
+	}
+	var summaries []string
+	var visit func(any)
+	visit = func(value any) {
+		switch item := value.(type) {
+		case map[string]any:
+			for key, child := range item {
+				if strings.EqualFold(key, "summary") && child != nil {
+					encoded, err := json.Marshal(child)
+					if err == nil {
+						summaries = append(summaries, string(encoded))
+					}
+					continue
+				}
+				visit(child)
+			}
+		case []any:
+			for _, child := range item {
+				visit(child)
+			}
+		}
+	}
+	visit(root)
+	return strings.Join(summaries, "\n")
 }
 func (m *remoteModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	r, w := schema.Pipe[*schema.Message](32)

@@ -434,6 +434,134 @@ func TestFinalAnswerDoesNotExposeProviderReasoningEnvelope(t *testing.T) {
 	}
 }
 
+func TestFinalProtocolRetriesOnceWithSummaryOnlyEvidence(t *testing.T) {
+	server := httptest.NewServer(New(testToken))
+	defer server.Close()
+	req := request("final-protocol-retry")
+	req.MaxIterations = 2
+	response := post(t, server.URL+"/v1/runs", req, testToken, "")
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	modelCalls, completed := 0, false
+	const detail = "private full tool body "
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "data: ") {
+			continue
+		}
+		var event Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &event); err != nil {
+			t.Fatal(err)
+		}
+		var reply Response
+		switch event.Type {
+		case "model.request":
+			modelCalls++
+			message := Message{Role: "assistant", Content: "资料摘要显示共 419 行。"}
+			switch modelCalls {
+			case 1:
+				message.ToolCalls = []schema.ToolCall{{ID: "read", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{}`}}}
+			case 2:
+				if len(event.Tools) != 0 {
+					t.Fatal("final answer request retained tools")
+				}
+				message.Content = "<｜DSML｜function_calls><｜DSML｜invoke name=\"skill_http_request\">..."
+			case 3:
+				encoded, _ := json.Marshal(event.Messages)
+				if strings.Contains(string(encoded), detail) || !strings.Contains(string(encoded), "数据行405–419") {
+					t.Fatalf("retry should contain summary only: %s", encoded)
+				}
+				if len(event.Tools) != 0 {
+					t.Fatal("summary-only retry retained tools")
+				}
+				message.Content = "共 419 行，末段数据行是 405–419。"
+			default:
+				t.Fatalf("unexpected model request %d", modelCalls)
+			}
+			reply = Response{RequestID: event.RequestID, Message: &message}
+		case "tool.request":
+			result := `{"Summary":"数据行405–419，最后序号419","detail":"` + strings.Repeat(detail, 100) + `"}`
+			reply = Response{RequestID: event.RequestID, Result: &result}
+		case "run.completed":
+			completed = true
+			if !strings.Contains(event.Final, "419") {
+				t.Fatalf("unexpected corrected answer %q", event.Final)
+			}
+		case "run.failed":
+			t.Fatalf("run failed: %s", event.Error)
+		}
+		if reply.RequestID != "" {
+			callback := post(t, server.URL+"/v1/runs/final-protocol-retry/responses", reply, testToken, runToken)
+			callback.Body.Close()
+			if callback.StatusCode != http.StatusNoContent {
+				t.Fatalf("callback status %d", callback.StatusCode)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !completed || modelCalls != 3 {
+		t.Fatalf("completed=%v model calls=%d", completed, modelCalls)
+	}
+}
+
+func TestFinalProtocolAfterStreamingStartsFailsWithoutRetry(t *testing.T) {
+	server := httptest.NewServer(New(testToken))
+	defer server.Close()
+	req := request("final-protocol-after-delta")
+	req.MaxIterations = 1
+	response := post(t, server.URL+"/v1/runs", req, testToken, "")
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	modelCalls, failed, completed, leakedDelta := 0, false, false, false
+	for scanner.Scan() {
+		if !strings.HasPrefix(scanner.Text(), "data: ") {
+			continue
+		}
+		var event Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &event); err != nil {
+			t.Fatal(err)
+		}
+		switch event.Type {
+		case "model.request":
+			modelCalls++
+			if modelCalls > 1 {
+				t.Fatal("must not retry after answer text has streamed")
+			}
+			requestID := event.RequestID
+			for _, delta := range []string{strings.Repeat("答", 140), "<｜DSML｜function_calls><｜DSML｜invoke name=\"skill_http_request\">"} {
+				callback := post(t, server.URL+"/v1/runs/final-protocol-after-delta/responses", Response{RequestID: requestID, Delta: delta}, testToken, runToken)
+				callback.Body.Close()
+				if callback.StatusCode != http.StatusNoContent {
+					t.Fatalf("delta callback status %d", callback.StatusCode)
+				}
+			}
+			content := strings.Repeat("答", 140) + "<｜DSML｜function_calls><｜DSML｜invoke name=\"skill_http_request\">"
+			message := Message{Role: "assistant", Content: content}
+			callback := post(t, server.URL+"/v1/runs/final-protocol-after-delta/responses", Response{RequestID: requestID, Message: &message}, testToken, runToken)
+			callback.Body.Close()
+			if callback.StatusCode != http.StatusNoContent {
+				t.Fatalf("final callback status %d", callback.StatusCode)
+			}
+		case "message.delta":
+			leakedDelta = true
+			if strings.Contains(event.Delta, "DSML") || strings.Contains(event.Delta, "invoke") {
+				t.Fatal("protocol text was streamed")
+			}
+		case "run.completed":
+			completed = true
+		case "run.failed":
+			failed = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if modelCalls != 1 || !failed || completed || !leakedDelta {
+		t.Fatalf("calls=%d failed=%v completed=%v streamed=%v", modelCalls, failed, completed, leakedDelta)
+	}
+}
+
 func TestStreamFinalNormalizationPreservesAlreadyEmittedBody(t *testing.T) {
 	r := &activeRun{}
 	r.finalDeltas.WriteString("正文引用 </think>\n# 示例标题")
