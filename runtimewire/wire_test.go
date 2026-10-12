@@ -149,7 +149,7 @@ func TestRunForwardsModelDeltasBeforeFinalResponse(t *testing.T) {
 	scanner := bufio.NewScanner(response.Body)
 	var runID, requestID string
 	var answer strings.Builder
-	deltas := []string{"第一段", "第二段", "第三段"}
+	deltas := []string{strings.Repeat("答", 128), "第二段", "第三段"}
 	seenDeltas, modelCalls := 0, 0
 	completed := false
 	for scanner.Scan() {
@@ -443,6 +443,7 @@ func TestFinalProtocolRetriesOnceWithSummaryOnlyEvidence(t *testing.T) {
 	defer response.Body.Close()
 	scanner := bufio.NewScanner(response.Body)
 	modelCalls, completed := 0, false
+	protocolLeaked := false
 	const detail = "private full tool body "
 	for scanner.Scan() {
 		if !strings.HasPrefix(scanner.Text(), "data: ") {
@@ -464,7 +465,14 @@ func TestFinalProtocolRetriesOnceWithSummaryOnlyEvidence(t *testing.T) {
 				if len(event.Tools) != 0 {
 					t.Fatal("final answer request retained tools")
 				}
-				message.Content = "<｜DSML｜function_calls><｜DSML｜invoke name=\"skill_http_request\">..."
+				message.Content = "I have rows 1–390. Let me continue... <｜｜DSML｜｜function_calls><｜｜DSML｜｜invoke name=\"skill_http_request\">..."
+				for _, part := range chunksByRunes(message.Content, 7) {
+					callback := post(t, server.URL+"/v1/runs/final-protocol-retry/responses", Response{RequestID: event.RequestID, Delta: part}, testToken, runToken)
+					callback.Body.Close()
+					if callback.StatusCode != http.StatusNoContent {
+						t.Fatalf("protocol delta callback status %d", callback.StatusCode)
+					}
+				}
 			case 3:
 				encoded, _ := json.Marshal(event.Messages)
 				if strings.Contains(string(encoded), detail) || !strings.Contains(string(encoded), "数据行405–419") {
@@ -488,6 +496,10 @@ func TestFinalProtocolRetriesOnceWithSummaryOnlyEvidence(t *testing.T) {
 			}
 		case "run.failed":
 			t.Fatalf("run failed: %s", event.Error)
+		case "message.delta":
+			if strings.Contains(event.Delta, "DSML") || strings.Contains(event.Delta, "invoke") {
+				protocolLeaked = true
+			}
 		}
 		if reply.RequestID != "" {
 			callback := post(t, server.URL+"/v1/runs/final-protocol-retry/responses", reply, testToken, runToken)
@@ -500,8 +512,8 @@ func TestFinalProtocolRetriesOnceWithSummaryOnlyEvidence(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if !completed || modelCalls != 3 {
-		t.Fatalf("completed=%v model calls=%d", completed, modelCalls)
+	if !completed || modelCalls != 3 || protocolLeaked {
+		t.Fatalf("completed=%v model calls=%d protocol leaked=%v", completed, modelCalls, protocolLeaked)
 	}
 }
 
@@ -529,14 +541,14 @@ func TestFinalProtocolAfterStreamingStartsFailsWithoutRetry(t *testing.T) {
 				t.Fatal("must not retry after answer text has streamed")
 			}
 			requestID := event.RequestID
-			for _, delta := range []string{strings.Repeat("答", 140), "<｜DSML｜function_calls><｜DSML｜invoke name=\"skill_http_request\">"} {
+			for _, delta := range []string{strings.Repeat("答", 140), "<｜｜DSML｜｜function_calls><｜｜DSML｜｜invoke name=\"skill_http_request\">"} {
 				callback := post(t, server.URL+"/v1/runs/final-protocol-after-delta/responses", Response{RequestID: requestID, Delta: delta}, testToken, runToken)
 				callback.Body.Close()
 				if callback.StatusCode != http.StatusNoContent {
 					t.Fatalf("delta callback status %d", callback.StatusCode)
 				}
 			}
-			content := strings.Repeat("答", 140) + "<｜DSML｜function_calls><｜DSML｜invoke name=\"skill_http_request\">"
+			content := strings.Repeat("答", 140) + "<｜｜DSML｜｜function_calls><｜｜DSML｜｜invoke name=\"skill_http_request\">"
 			message := Message{Role: "assistant", Content: content}
 			callback := post(t, server.URL+"/v1/runs/final-protocol-after-delta/responses", Response{RequestID: requestID, Message: &message}, testToken, runToken)
 			callback.Body.Close()
@@ -560,6 +572,19 @@ func TestFinalProtocolAfterStreamingStartsFailsWithoutRetry(t *testing.T) {
 	if modelCalls != 1 || !failed || completed || !leakedDelta {
 		t.Fatalf("calls=%d failed=%v completed=%v streamed=%v", modelCalls, failed, completed, leakedDelta)
 	}
+}
+
+func chunksByRunes(value string, size int) []string {
+	runes := []rune(value)
+	chunks := make([]string, 0, (len(runes)+size-1)/size)
+	for start := 0; start < len(runes); start += size {
+		end := start + size
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunks = append(chunks, string(runes[start:end]))
+	}
+	return chunks
 }
 
 func TestStreamFinalNormalizationPreservesAlreadyEmittedBody(t *testing.T) {

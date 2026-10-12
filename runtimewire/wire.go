@@ -28,12 +28,13 @@ import (
 )
 
 const (
-	maxWireBytes         = 24 << 20
-	maxTextBytes         = 4 << 20
-	maxEncodedImageBytes = 16 << 20
-	maxDecodedImageBytes = 8 << 20
-	maxImagesPerMessage  = 4
-	finalSummaryMaxBytes = 12 << 10
+	maxWireBytes          = 24 << 20
+	maxTextBytes          = 4 << 20
+	maxEncodedImageBytes  = 16 << 20
+	maxDecodedImageBytes  = 8 << 20
+	maxImagesPerMessage   = 4
+	finalAnswerProbeRunes = 128
+	finalSummaryMaxBytes  = 12 << 10
 )
 
 var errFinalProtocolDetected = errors.New("model returned a tool protocol instead of a final answer")
@@ -949,6 +950,7 @@ func (m *remoteModel) requestFinalAnswer(ctx context.Context, messages []Message
 type finalDeltaGate struct {
 	forward  func(string) error
 	probe    strings.Builder
+	probed   bool
 	emitted  bool
 	protocol bool
 }
@@ -962,9 +964,13 @@ func (g *finalDeltaGate) accept(delta string) error {
 		g.protocol = true
 		return nil
 	}
+	if !g.probed && len([]rune(g.probe.String())) < finalAnswerProbeRunes {
+		return nil
+	}
+	g.probed = true
 	value := g.probe.String()
 	lower := strings.ToLower(value)
-	markers := []string{"<｜dsml｜", "<|dsml|", "dsml"}
+	markers := []string{"<｜｜dsml｜｜", "<||dsml||", "<｜dsml｜", "<|dsml|", "dsml"}
 	markerAt := -1
 	for _, marker := range markers {
 		if at := strings.Index(lower, marker); at >= 0 && (markerAt < 0 || at < markerAt) {
@@ -1010,7 +1016,7 @@ func (g *finalDeltaGate) send(value string) error {
 func possibleDSMLPrefixSuffix(value string) int {
 	lower := strings.ToLower(value)
 	max := 0
-	for _, marker := range []string{"<｜dsml｜", "<|dsml|", "dsml"} {
+	for _, marker := range []string{"<｜｜dsml｜｜", "<||dsml||", "<｜dsml｜", "<|dsml|", "dsml"} {
 		limit := len(marker) - 1
 		if len(lower) < limit {
 			limit = len(lower)
@@ -1037,8 +1043,9 @@ func (g *finalDeltaGate) flush() error {
 
 func containsDSMLToolCall(content string) bool {
 	lower := strings.ToLower(content)
-	marker := strings.Contains(lower, "<｜dsml｜") || strings.Contains(lower, "<|dsml|") || strings.Contains(lower, "dsml")
-	return marker && strings.Contains(lower, "invoke") && strings.Contains(lower, "skill_http_request")
+	marker := strings.Contains(lower, "<｜｜dsml｜｜") || strings.Contains(lower, "<||dsml||") || strings.Contains(lower, "<｜dsml｜") || strings.Contains(lower, "<|dsml|") || strings.Contains(lower, "dsml")
+	toolProtocol := strings.Contains(lower, "invoke") || strings.Contains(lower, "function_calls") || strings.Contains(lower, "tool_calls") || strings.Contains(lower, "<｜｜tools｜｜") || strings.Contains(lower, "<||tools||")
+	return marker && toolProtocol
 }
 
 func summaryOnlyFinalMessages(messages []Message) []Message {
