@@ -189,6 +189,9 @@ func TestImageOnlyQuestionSurvivesFinalSelection(t *testing.T) {
 			postCallback(t, server.URL, event.RunID, string(callback))
 		case "run.completed":
 			completed = true
+			if event.Final != "图片中没有可识别的标高文字。" {
+				t.Fatal("image-only visible answer was not preserved")
+			}
 		case "run.failed":
 			t.Fatalf("run failed: %s", event.Error)
 		}
@@ -196,7 +199,7 @@ func TestImageOnlyQuestionSurvivesFinalSelection(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if !completed || modelCalls != 2 {
+	if !completed || modelCalls != 1 {
 		t.Fatalf("completed=%v model calls=%d", completed, modelCalls)
 	}
 }

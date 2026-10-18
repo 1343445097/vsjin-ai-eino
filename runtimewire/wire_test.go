@@ -169,7 +169,7 @@ func TestRunForwardsModelDeltasBeforeFinalResponse(t *testing.T) {
 				if len(event.Tools) != 1 {
 					t.Fatal("decision round did not include tools")
 				}
-				draft := Message{Role: "assistant", Content: "draft answer"}
+				draft := Message{Role: "assistant", ToolCalls: []schema.ToolCall{{ID: "stream-budget-read", Type: "function", Function: schema.FunctionCall{Name: "skills_read", Arguments: `{"skill":"drawing-analysis"}`}}}}
 				result := post(t, server.URL+"/v1/runs/"+runID+"/responses", Response{RequestID: requestID, Message: &draft}, testToken, runToken)
 				result.Body.Close()
 				if result.StatusCode != http.StatusNoContent {
@@ -215,6 +215,16 @@ func TestRunForwardsModelDeltasBeforeFinalResponse(t *testing.T) {
 			result.Body.Close()
 			if result.StatusCode != http.StatusNoContent {
 				t.Fatalf("final callback status=%d", result.StatusCode)
+			}
+		case "tool.request":
+			if event.Call == nil || event.Call.ID != "stream-budget-read" {
+				t.Fatal("unexpected tool before budget-final stream")
+			}
+			evidence := "授权图纸证据"
+			result := post(t, server.URL+"/v1/runs/"+runID+"/responses", Response{RequestID: event.RequestID, Result: &evidence}, testToken, runToken)
+			result.Body.Close()
+			if result.StatusCode != http.StatusNoContent {
+				t.Fatalf("tool callback status=%d", result.StatusCode)
 			}
 		case "run.completed":
 			completed = true
