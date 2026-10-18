@@ -825,6 +825,20 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 		return nil, finalRound, errors.New("model requested tools during final answer round")
 	}
 	if !finalRound && len(reply.Message.ToolCalls) == 0 {
+		// A tool-enabled model can already produce its final answer. Do not
+		// discard it and pay to regenerate the same evidence with tools off.
+		// The callback is complete here, so mixed text/tool responses have not
+		// leaked any provisional text. Keep forced finalization for malformed
+		// or empty responses; never publish tool protocol or open reasoning.
+		content := strings.TrimSpace(reply.Message.Content)
+		openReasoning := strings.HasPrefix(content, "<think>") && !strings.Contains(content, "</think>")
+		visible := m.run.normalizeFinal(content)
+		if !openReasoning && !containsDSMLToolCall(content) && visible != "" {
+			// execute normalizes the completed answer once. Returning the raw
+			// message avoids applying legacy envelope cleanup twice, which
+			// could erase a literal </think> quoted in the visible body.
+			return toEino(*reply.Message), true, nil
+		}
 		return m.generateFinalAnswer(ctx, messages, onDelta)
 	}
 	message := toEino(*reply.Message)

@@ -198,10 +198,8 @@ func TestTextFinalRequestPreservesPrefixAcrossMultipleToolRounds(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantModels := 4
-			if mode == "draft" {
-				wantModels = 5
-			}
-			if !completed || !finalSeen || toolRequests != 3 || modelRequests != wantModels {
+			wantFinal := mode == "budget"
+			if !completed || finalSeen != wantFinal || toolRequests != 3 || modelRequests != wantModels {
 				t.Fatalf("completed=%v final=%v tools=%d models=%d, want models=%d", completed, finalSeen, toolRequests, modelRequests, wantModels)
 			}
 		})
