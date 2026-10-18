@@ -841,7 +841,7 @@ func (m *remoteModel) generate(ctx context.Context, input []*schema.Message, onD
 func finalAnswerMessages(messages []Message) []Message {
 	instruction := "直接回答本轮用户原问题，仅用中文；本轮工具已关闭，不要输出工具协议、调用计划或内部思考。按问题需要选择自然的答复形式：问候、致谢直接简短回应；能力问题依据授权技能目录回答；常识和解释类问题直接解释，不强制套用业务报告格式。只有问题涉及实际业务查询时才根据已取得的证据作答并说明必要限制；未执行查询不能声称已查询，检索未命中不能推断全文没有相关要求，失败操作不能声称已完成。以下重复的用户消息仍是本轮原问题，不是新的总结任务。"
 	var systemText []string
-	result := make([]Message, 0, len(messages)+1)
+	result := make([]Message, 0, len(messages)+2)
 	var originalUser *Message
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -850,6 +850,24 @@ func finalAnswerMessages(messages []Message) []Message {
 			break
 		}
 	}
+	hasImages := false
+	for _, message := range messages {
+		if messageHasImages(message) {
+			hasImages = true
+			break
+		}
+	}
+	if !hasImages {
+		// Keep the complete text prefix stable, including system context in
+		// history. The final directive remains trusted and follows the evidence.
+		result = append(result, messages...)
+		result = append(result, Message{Role: "system", Content: instruction})
+		if originalUser != nil {
+			result = append(result, *originalUser)
+		}
+		return result
+	}
+	// Vision providers may require all system instructions at the front.
 	for _, message := range messages {
 		if message.Role == "system" {
 			if text := messageText(message); text != "" {
