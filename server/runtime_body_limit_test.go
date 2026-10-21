@@ -46,7 +46,7 @@ func startBodyLimitServer(t *testing.T) (string, *http.Client) {
 	h := s.Handler()
 	done := make(chan error, 1)
 	go func() { done <- h.Run() }()
-	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ExpectContinueTimeout: time.Second}
 	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
 	t.Cleanup(func() {
 		transport.CloseIdleConnections()
@@ -91,6 +91,10 @@ func postBodyLimitRequest(t *testing.T, client *http.Client, url string, body []
 	req.Header.Set("Authorization", "Bearer "+bodyLimitServiceToken)
 	req.Header.Set("X-VSJin-Run-Token", bodyLimitRunToken)
 	req.Header.Set("Content-Type", "application/json")
+	if len(body) > 24<<20 {
+		// Let Hertz reject Content-Length before the client sends the body.
+		req.Header.Set("Expect", "100-continue")
+	}
 	response, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
