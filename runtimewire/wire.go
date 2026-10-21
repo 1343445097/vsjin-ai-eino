@@ -28,7 +28,8 @@ import (
 )
 
 const (
-	maxWireBytes          = 24 << 20
+	// MaxWireBytes bounds the full wire payload, including base64 images.
+	MaxWireBytes          = 24 << 20
 	maxTextBytes          = 4 << 20
 	maxEncodedImageBytes  = 16 << 20
 	maxDecodedImageBytes  = 8 << 20
@@ -351,7 +352,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 func decode(w http.ResponseWriter, r *http.Request, out any) error {
-	return decodeLimit(w, r, out, maxWireBytes)
+	return decodeLimit(w, r, out, MaxWireBytes)
 }
 
 func decodeLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) error {
@@ -533,7 +534,7 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 }
 func (r *activeRun) emit(e Event) error {
 	encoded, err := json.Marshal(e)
-	if err != nil || len(encoded) > maxWireBytes-1024 {
+	if err != nil || len(encoded) > MaxWireBytes-1024 {
 		return errors.New("run event exceeds protocol budget")
 	}
 	select {
