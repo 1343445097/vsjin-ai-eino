@@ -191,7 +191,7 @@ func (s *Server[M]) Handler() *hserver.Hertz {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	h := hserver.New(hserver.WithHostPorts(net.JoinHostPort(host, s.cfg.Port)), hserver.WithMaxRequestBodySize(4<<20))
+	h := hserver.New(hserver.WithHostPorts(net.JoinHostPort(host, s.cfg.Port)), hserver.WithMaxRequestBodySize(runtimewire.MaxWireBytes))
 	h.Use(s.authorizeRequest)
 	h.POST("/v1/runs", adaptor.HertzHandler(s.wire))
 	h.POST("/v1/runs/:runId/responses", adaptor.HertzHandler(s.wire))
